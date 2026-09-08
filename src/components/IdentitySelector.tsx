@@ -1,22 +1,20 @@
 'use client';
 
 import React, { useState } from 'react';
-import { RotateCw, Check, Edit2 } from 'lucide-react';
+import { Check, Edit2 } from 'lucide-react';
 
 interface IdentitySelectorProps {
   userName: string;
   onNameChange: (name: string) => void;
-  onRegenerate: () => void;
+  onRegenerate?: () => void;
 }
 
 export function IdentitySelector({
   userName,
   onNameChange,
-  onRegenerate,
 }: IdentitySelectorProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [inputVal, setInputVal] = useState(userName);
-  const [isSpinning, setIsSpinning] = useState(false);
 
   const handleSave = () => {
     if (inputVal.trim()) {
@@ -32,12 +30,6 @@ export function IdentitySelector({
       setInputVal(userName);
       setIsEditing(false);
     }
-  };
-
-  const handleRegenerateClick = () => {
-    setIsSpinning(true);
-    onRegenerate();
-    setTimeout(() => setIsSpinning(false), 300);
   };
 
   return (
@@ -81,20 +73,6 @@ export function IdentitySelector({
           <Edit2 className="w-3 h-3 text-neutral-500 opacity-0 group-hover:opacity-100 transition-opacity" />
         </button>
       )}
-
-      <button
-        type="button"
-        onClick={handleRegenerateClick}
-        className="inline-flex items-center gap-1 rounded-md font-medium text-xs text-neutral-500 hover:text-neutral-300 ml-2.5 h-6 px-2 hover:bg-neutral-800/80 transition-colors active:scale-95"
-        title="Generate random resident identity"
-      >
-        <RotateCw
-          className={`w-3 h-3 transition-transform duration-300 ${
-            isSpinning ? 'rotate-180 text-white' : ''
-          }`}
-        />
-        <span>Regenerate</span>
-      </button>
     </div>
   );
 }
