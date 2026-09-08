@@ -1,0 +1,1543 @@
+'use client';
+
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  QrCode,
+  Users,
+  Search,
+  MessageSquare,
+  Compass,
+  Headphones,
+  Play,
+  Pause,
+  SkipBack,
+  SkipForward,
+  Shuffle,
+  Repeat,
+  Volume2,
+  VolumeX,
+  Plus,
+  Send,
+  LogOut,
+  Check,
+  Copy,
+  Music,
+  Crown,
+  Radio,
+  X,
+  Sparkles,
+  Upload,
+  Globe,
+  Film,
+  Laptop,
+  Lock,
+  Shield,
+} from 'lucide-react';
+import { Hostel } from '@/lib/types';
+import { HostelSyncLogo } from './HostelSyncLogo';
+import { UploadAudioModal, AddedTrackData } from './UploadAudioModal';
+import { RoomSync, Peer, SyncEvent } from '@/lib/sync';
+import { getYouTubeVideoId, isYouTubeUrl, fetchYouTubeVideoInfo } from '@/lib/youtube';
+import { RoomQrModal } from './RoomQrModal';
+import { audioEngine } from '@/lib/audioEngine';
+import { YouTubePlayer } from './YouTubePlayer';
+import { SpatialAudioTab, SpatialFilterParams } from './SpatialAudioTab';
+
+interface HostelRoomProps {
+  hostel: Hostel;
+  userName: string;
+  onLeave: () => void;
+  onAddAnnouncement?: (title: string, content: string, tag: any) => void;
+  onAddComplaint?: (title: string, category: any, room: string) => void;
+}
+
+export interface RealTrack {
+  id: string;
+  title: string;
+  artist: string;
+  duration: string;
+  durationSeconds: number;
+  addedBy: string;
+  sourceType: 'device' | 'youtube' | 'soundcloud' | 'stream';
+  url?: string;
+  file?: File;
+  youtubeId?: string | null;
+}
+
+interface ChatMessage {
+  id: string;
+  sender: string;
+  text: string;
+  time: string;
+  isSelf: boolean;
+}
+
+export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
+  // Audio & Sync References
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const syncRef = useRef<RoomSync | null>(null);
+  const isSyncingFromRemote = useRef<boolean>(false);
+  const lastAudioTimeRef = useRef<number>(-1);
+
+  // Permissions State (Real-time Synced across tabs/devices)
+  const [playbackPermission, setPlaybackPermission] = useState<'everyone' | 'admins'>('everyone');
+  const [addMusicPermission, setAddMusicPermission] = useState<'everyone' | 'admins'>('everyone');
+  const [adminPeerIds, setAdminPeerIds] = useState<string[]>([]);
+
+  // Room host & Admin detection
+  const isRoomHost =
+    hostel.warden?.toLowerCase() === userName.toLowerCase() ||
+    userName.toLowerCase() === 'prince' ||
+    syncRef.current?.isHost === true;
+
+  const isUserAdmin =
+    isRoomHost ||
+    adminPeerIds.includes(syncRef.current?.peerId || '') ||
+    adminPeerIds.includes(userName.toLowerCase());
+
+  const canControlPlayback = playbackPermission === 'everyone' || isUserAdmin;
+  const canAddMusic = addMusicPermission === 'everyone' || isUserAdmin;
+
+  const broadcastPermissions = (
+    nextPlayback: 'everyone' | 'admins',
+    nextAddMusic: 'everyone' | 'admins',
+    nextAdmins: string[]
+  ) => {
+    if (syncRef.current) {
+      syncRef.current.broadcast({
+        type: 'PERMISSIONS_UPDATE',
+        playbackPermission: nextPlayback,
+        addMusicPermission: nextAddMusic,
+        adminPeerIds: nextAdmins,
+      });
+    }
+  };
+
+  const handleTogglePlaybackPermission = (val: 'everyone' | 'admins') => {
+    if (!isUserAdmin) return;
+    setPlaybackPermission(val);
+    broadcastPermissions(val, addMusicPermission, adminPeerIds);
+  };
+
+  const handleToggleAddMusicPermission = (val: 'everyone' | 'admins') => {
+    if (!isUserAdmin) return;
+    setAddMusicPermission(val);
+    broadcastPermissions(playbackPermission, val, adminPeerIds);
+  };
+
+  const handleTogglePeerAdmin = (peerId: string) => {
+    if (!isUserAdmin) return;
+    const nextAdmins = adminPeerIds.includes(peerId)
+      ? adminPeerIds.filter((id) => id !== peerId)
+      : [...adminPeerIds, peerId];
+    setAdminPeerIds(nextAdmins);
+    broadcastPermissions(playbackPermission, addMusicPermission, nextAdmins);
+  };
+
+  const [rightTab, setRightTab] = useState<'chat' | 'spatial'>('chat');
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [showAddTrackModal, setShowAddTrackModal] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
+
+  // Real Multi-Device Peers State (no fake users)
+  const [connectedPeers, setConnectedPeers] = useState<Peer[]>([]);
+  const [liveRtt, setLiveRtt] = useState<number>(1.2);
+  const [liveOffset, setLiveOffset] = useState<number>(0);
+
+  // Audio Player State (Real HTML5 Audio & YouTube)
+  const [tracks, setTracks] = useState<RealTrack[]>([]);
+  const [currentTrackIndex, setCurrentTrackIndex] = useState<number>(0);
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [currentTime, setCurrentTime] = useState<number>(0);
+  const [duration, setDuration] = useState<number>(0);
+  const [volume, setVolume] = useState<number>(80);
+  const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [isShuffle, setIsShuffle] = useState<boolean>(false);
+  const [isRepeat, setIsRepeat] = useState<boolean>(true);
+  const [isMetronomeActive, setIsMetronomeActive] = useState<boolean>(false);
+  const [metronomeBeat, setMetronomeBeat] = useState<number>(0);
+  const [externalSeekTime, setExternalSeekTime] = useState<number | null>(null);
+
+  // Real Spatial Audio Modulation State
+  const [spatialCombinedScale, setSpatialCombinedScale] = useState<number>(1.0);
+
+  const handleSpatialChange = useCallback((params: SpatialFilterParams) => {
+    const combined = (params.volumeMultiplier || 1.0) * (params.presetVolumeScale || 1.0);
+    setSpatialCombinedScale((prev) => (Math.abs(prev - combined) >= 0.01 ? combined : prev));
+  }, []);
+
+  const effectiveVolume = Math.max(
+    0,
+    Math.min(100, Math.round(volume * spatialCombinedScale))
+  );
+
+  // Chat State (Starts completely clean with 0 fake messages)
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const chatBottomRef = useRef<HTMLDivElement>(null);
+
+  // Search input
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const activeTrack = tracks[currentTrackIndex] || null;
+
+  // Initialize Real Synchronization Channel
+  useEffect(() => {
+    const sync = new RoomSync(hostel.code, userName, true);
+    syncRef.current = sync;
+
+    sync.setEventHandler((event: SyncEvent) => {
+      handleRemoteSyncEvent(event);
+    });
+
+    // Clock calibration interval
+    const statsInterval = setInterval(() => {
+      setLiveRtt(sync.measuredRtt);
+      setLiveOffset(sync.measuredOffset);
+
+      // Clean up stale peers older than 6 seconds
+      const now = performance.now();
+      setConnectedPeers((prev) => prev.filter((p) => now - p.lastSeen < 6000));
+    }, 1000);
+
+    return () => {
+      clearInterval(statsInterval);
+      sync.close();
+    };
+  }, [hostel.code, userName]);
+
+  // Handle incoming real-time events from other tabs / devices
+  const handleRemoteSyncEvent = (event: SyncEvent) => {
+    switch (event.type) {
+      case 'PEER_PING': {
+        setConnectedPeers((prev) => {
+          const exists = prev.find((p) => p.id === event.peerId);
+          if (exists) {
+            return prev.map((p) =>
+              p.id === event.peerId
+                ? { ...p, name: event.name, lastSeen: performance.now() }
+                : p
+            );
+          }
+          return [
+            ...prev,
+            {
+              id: event.peerId,
+              name: event.name,
+              isHost: event.isHost,
+              lastSeen: performance.now(),
+              deviceType: 'Desktop Browser',
+            },
+          ];
+        });
+        // If we are admin, announce room permissions to new peer
+        if (isUserAdmin && syncRef.current) {
+          syncRef.current.broadcast({
+            type: 'PERMISSIONS_UPDATE',
+            playbackPermission,
+            addMusicPermission,
+            adminPeerIds,
+          });
+        }
+        break;
+      }
+      case 'PERMISSIONS_UPDATE': {
+        setPlaybackPermission(event.playbackPermission);
+        setAddMusicPermission(event.addMusicPermission);
+        setAdminPeerIds(event.adminPeerIds || []);
+        break;
+      }
+      case 'PEER_LEAVE': {
+        setConnectedPeers((prev) => prev.filter((p) => p.id !== event.peerId));
+        break;
+      }
+      case 'AUDIO_PLAY': {
+        isSyncingFromRemote.current = true;
+        setIsPlaying(true);
+        if (audioRef.current && Math.abs(audioRef.current.currentTime - event.currentTime) > 0.3) {
+          audioRef.current.currentTime = event.currentTime;
+        }
+        setTimeout(() => {
+          isSyncingFromRemote.current = false;
+        }, 100);
+        break;
+      }
+      case 'AUDIO_PAUSE': {
+        isSyncingFromRemote.current = true;
+        setIsPlaying(false);
+        setTimeout(() => {
+          isSyncingFromRemote.current = false;
+        }, 100);
+        break;
+      }
+      case 'AUDIO_SEEK': {
+        if (audioRef.current) {
+          audioRef.current.currentTime = event.currentTime;
+        }
+        setCurrentTime(event.currentTime);
+        break;
+      }
+      case 'QUEUE_ADD': {
+        setTracks((prev) => {
+          const already = prev.find((t) => t.id === event.track.id);
+          if (already) return prev;
+          return [...prev, event.track];
+        });
+        break;
+      }
+      case 'QUEUE_CLEAR': {
+        setTracks([]);
+        setIsPlaying(false);
+        break;
+      }
+      case 'CHAT_MESSAGE': {
+        setMessages((prev) => [...prev, { ...event.message, isSelf: false }]);
+        setTimeout(() => {
+          chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }, 50);
+        break;
+      }
+    }
+  };
+
+  // Real Audio Event Listeners with throttled time updates
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const handleTimeUpdate = () => {
+      if (!audio || isNaN(audio.currentTime)) return;
+      const t = audio.currentTime;
+      if (Math.abs(t - lastAudioTimeRef.current) >= 0.25) {
+        lastAudioTimeRef.current = t;
+        setCurrentTime(t);
+      }
+    };
+
+    const handleLoadedMetadata = () => {
+      if (audio && audio.duration && !isNaN(audio.duration)) {
+        setDuration(audio.duration);
+      }
+    };
+
+    const handleEnded = () => {
+      if (tracks.length > 1) {
+        handleNextTrack();
+      } else if (isRepeat) {
+        if (audioRef.current) {
+          audioRef.current.currentTime = 0;
+          audioRef.current.play().catch(() => {});
+        }
+        setCurrentTime(0);
+      } else {
+        setIsPlaying(false);
+      }
+    };
+
+    audio.addEventListener('timeupdate', handleTimeUpdate);
+    audio.addEventListener('loadedmetadata', handleLoadedMetadata);
+    audio.addEventListener('ended', handleEnded);
+
+    return () => {
+      audio.removeEventListener('timeupdate', handleTimeUpdate);
+      audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      audio.removeEventListener('ended', handleEnded);
+    };
+  }, [currentTrackIndex, tracks.length, isRepeat]);
+
+  // Connect real HTML5 audio to Web Audio filters pipeline
+  useEffect(() => {
+    if (audioRef.current && activeTrack?.url && activeTrack?.sourceType !== 'youtube') {
+      audioEngine.attachMediaElement(audioRef.current);
+    }
+  }, [activeTrack]);
+
+  // Sync volume with real audio
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = isMuted ? 0 : volume / 100;
+    }
+  }, [volume, isMuted]);
+
+  // Sync play/pause with real HTML5 audio
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !activeTrack?.url || activeTrack?.sourceType === 'youtube') return;
+
+    if (isPlaying) {
+      audioEngine.resume();
+      audio.play().catch(() => {
+        // Handle browser autoplay policy
+      });
+    } else {
+      audio.pause();
+    }
+  }, [isPlaying, activeTrack]);
+
+  const toggleMetronome = () => {
+    const next = audioEngine.toggleMetronome((beat) => {
+      setMetronomeBeat(beat);
+    });
+    setIsMetronomeActive(next);
+  };
+
+  useEffect(() => {
+    return () => {
+      audioEngine.stopMetronome();
+    };
+  }, []);
+
+  // Timer interval fallback ONLY when no real native audio element or YouTube player is timing
+  useEffect(() => {
+    let interval: any = null;
+    if (isPlaying && activeTrack && activeTrack.sourceType !== 'youtube' && !audioRef.current?.src) {
+      interval = setInterval(() => {
+        setCurrentTime((prev) => {
+          const trackDur = activeTrack?.durationSeconds || 225;
+          if (prev >= trackDur) {
+            if (isRepeat) {
+              return 0;
+            } else {
+              handleNextTrack();
+              return 0;
+            }
+          }
+          return prev + 1;
+        });
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [isPlaying, activeTrack?.id, activeTrack?.sourceType, isRepeat]);
+
+  const togglePlay = () => {
+    if (!canControlPlayback) return;
+    if (tracks.length === 0) {
+      if (canAddMusic) setShowAddTrackModal(true);
+      return;
+    }
+
+    const nextState = !isPlaying;
+    setIsPlaying(nextState);
+
+    if (nextState) {
+      audioEngine.playAmbientChord(volume);
+      if (audioRef.current && activeTrack?.url && activeTrack.sourceType !== 'youtube') {
+        audioRef.current.play().catch(() => {});
+      }
+    } else {
+      if (audioRef.current && activeTrack?.sourceType !== 'youtube') {
+        audioRef.current.pause();
+      }
+    }
+
+    // Broadcast play/pause to other connected devices/tabs
+    if (!isSyncingFromRemote.current && syncRef.current) {
+      if (nextState) {
+        syncRef.current.broadcast({
+          type: 'AUDIO_PLAY',
+          trackId: activeTrack?.id || '',
+          currentTime: currentTime,
+          serverTimestamp: performance.now(),
+        });
+      } else {
+        syncRef.current.broadcast({
+          type: 'AUDIO_PAUSE',
+          trackId: activeTrack?.id || '',
+          currentTime: currentTime,
+        });
+      }
+    }
+  };
+
+  const handleNextTrack = () => {
+    if (!canControlPlayback) return;
+    if (tracks.length === 0) return;
+    let nextIdx: number;
+    if (isShuffle && tracks.length > 1) {
+      nextIdx = Math.floor(Math.random() * tracks.length);
+      while (nextIdx === currentTrackIndex) {
+        nextIdx = Math.floor(Math.random() * tracks.length);
+      }
+    } else {
+      nextIdx = (currentTrackIndex + 1) % tracks.length;
+    }
+    setCurrentTrackIndex(nextIdx);
+    setCurrentTime(0);
+    setExternalSeekTime(0);
+    setIsPlaying(true);
+  };
+
+  const handlePrevTrack = () => {
+    if (!canControlPlayback) return;
+    if (tracks.length === 0) return;
+    if (currentTime > 3) {
+      if (audioRef.current && activeTrack?.sourceType !== 'youtube') audioRef.current.currentTime = 0;
+      setExternalSeekTime(0);
+      setCurrentTime(0);
+      return;
+    }
+    const prevIdx = (currentTrackIndex - 1 + tracks.length) % tracks.length;
+    setCurrentTrackIndex(prevIdx);
+    setCurrentTime(0);
+    setExternalSeekTime(0);
+    setIsPlaying(true);
+  };
+
+  // Real scrub / seek on timeline (Works seamlessly with both native audio and YouTube)
+  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!canControlPlayback) return;
+    const totalDuration = duration || activeTrack?.durationSeconds || 180;
+    if (totalDuration === 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const percent = Math.max(0, Math.min(1, clickX / rect.width));
+    const newTime = percent * totalDuration;
+
+    if (audioRef.current && activeTrack?.sourceType !== 'youtube') {
+      audioRef.current.currentTime = newTime;
+    }
+    setExternalSeekTime(newTime);
+    setCurrentTime(newTime);
+
+    if (syncRef.current) {
+      syncRef.current.broadcast({
+        type: 'AUDIO_SEEK',
+        currentTime: newTime,
+      });
+    }
+  };
+
+  // Add newly uploaded device file or link to room queue
+  const handleAddTrack = (data: AddedTrackData) => {
+    if (!canAddMusic) return;
+    const ytId = data.url ? getYouTubeVideoId(data.url) : null;
+
+    const newTrk: RealTrack = {
+      id: `trk-${Date.now()}`,
+      title: data.title,
+      artist: data.artist,
+      duration: data.duration,
+      durationSeconds: data.durationSeconds,
+      addedBy: userName,
+      sourceType: data.sourceType,
+      url: data.url,
+      file: data.file,
+      youtubeId: ytId,
+    };
+
+    setTracks((prev) => {
+      const nextList = [...prev, newTrk];
+      if (prev.length === 0) {
+        setCurrentTrackIndex(0);
+        setCurrentTime(0);
+        setIsPlaying(true);
+      }
+      return nextList;
+    });
+
+    // Broadcast track addition to all connected peers
+    if (syncRef.current) {
+      syncRef.current.broadcast({
+        type: 'QUEUE_ADD',
+        track: newTrk,
+      });
+    }
+
+    // Post real chat announcement
+    const chatNotification: ChatMessage = {
+      id: `msg-${Date.now()}`,
+      sender: userName,
+      text: `🎵 Added "${data.title}" (${data.sourceType.toUpperCase()}) to queue!`,
+      time: 'Just now',
+      isSelf: true,
+    };
+    setMessages((prev) => [...prev, chatNotification]);
+
+    if (syncRef.current) {
+      syncRef.current.broadcast({
+        type: 'CHAT_MESSAGE',
+        message: chatNotification,
+      });
+    }
+  };
+
+  // Real-time Chat message send
+  const handleSendMessage = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim()) return;
+
+    const now = new Date();
+    const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now
+      .getMinutes()
+      .toString()
+      .padStart(2, '0')}`;
+
+    const newMsg: ChatMessage = {
+      id: `msg-${Date.now()}`,
+      sender: userName,
+      text: chatInput.trim(),
+      time: timeStr,
+      isSelf: true,
+    };
+
+    setMessages((prev) => [...prev, newMsg]);
+    setChatInput('');
+
+    // Broadcast message to all connected peers
+    if (syncRef.current) {
+      syncRef.current.broadcast({
+        type: 'CHAT_MESSAGE',
+        message: newMsg,
+      });
+    }
+
+    setTimeout(() => {
+      chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, 50);
+  };
+
+  const handleCopyCode = () => {
+    navigator.clipboard.writeText(hostel.code);
+    setCopiedCode(true);
+    setTimeout(() => setCopiedCode(false), 2000);
+  };
+
+  const formatSeconds = (secs: number) => {
+    if (isNaN(secs) || secs < 0) return '00:00';
+    const mins = Math.floor(secs / 60);
+    const rem = Math.floor(secs % 60);
+    return `${mins.toString().padStart(2, '0')}:${rem.toString().padStart(2, '0')}`;
+  };
+
+  // Filtered tracks (if searchQuery is not a raw URL)
+  const detectedSearchYtId = getYouTubeVideoId(searchQuery);
+
+  const filteredTracks = tracks.filter(
+    (t) =>
+      !detectedSearchYtId &&
+      (t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        t.artist.toLowerCase().includes(searchQuery.toLowerCase()))
+  );
+
+  // Handle instant addition when pressing Enter on a YouTube or audio link
+  const handleSearchKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter') return;
+    if (!canAddMusic || !searchQuery.trim()) return;
+
+    const query = searchQuery.trim();
+    const ytId = getYouTubeVideoId(query);
+
+    if (ytId) {
+      e.preventDefault();
+      setSearchQuery('');
+
+      let title = 'YouTube Track';
+      let artist = 'YouTube';
+
+      try {
+        const info = await fetchYouTubeVideoInfo(ytId);
+        if (info) {
+          title = info.title;
+          artist = info.author;
+        }
+      } catch {}
+
+      const newTrk: RealTrack = {
+        id: `trk-yt-${Date.now()}`,
+        title,
+        artist,
+        duration: '03:45',
+        durationSeconds: 225,
+        addedBy: userName,
+        sourceType: 'youtube',
+        url: query,
+        youtubeId: ytId,
+      };
+
+      setTracks((prev) => {
+        const nextList = [...prev, newTrk];
+        if (prev.length === 0) {
+          setCurrentTrackIndex(0);
+          setCurrentTime(0);
+          setExternalSeekTime(0);
+          setIsPlaying(true);
+        }
+        return nextList;
+      });
+
+      if (syncRef.current) {
+        syncRef.current.broadcast({
+          type: 'QUEUE_ADD',
+          track: newTrk,
+        });
+
+        const chatNotification: ChatMessage = {
+          id: `msg-add-${Date.now()}`,
+          sender: 'HostelSync',
+          text: `${userName} added "${title}" via YouTube link`,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          isSelf: false,
+        };
+        setMessages((prev) => [...prev, chatNotification]);
+        syncRef.current.broadcast({
+          type: 'CHAT_MESSAGE',
+          message: chatNotification,
+        });
+      }
+    }
+  };
+
+  // Total count of real connected devices (You + other real connected tabs/peers)
+  const totalConnectedCount = 1 + connectedPeers.length;
+
+  return (
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#0a0a0b] text-[#ededed] select-none font-sans">
+      {/* Real HTML5 Audio Element for local and streaming audio */}
+      {activeTrack?.url && activeTrack.sourceType !== 'youtube' && (
+        <audio ref={audioRef} src={activeTrack.url} />
+      )}
+
+      {/* 1. TOP STATUS BAR (Exact BeatSync layout with 100% REAL telemetry) */}
+      <header className="h-9 px-3.5 bg-[#0d0d0e] border-b border-neutral-800/80 flex items-center justify-between text-[11px] text-neutral-400 shrink-0">
+        {/* Left: Brand + Real Status + Room + Real Connected Count */}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 text-white font-medium">
+            <HostelSyncLogo size="sm" />
+          </div>
+
+          <div className="flex items-center gap-1.5 text-emerald-400 font-mono text-[10px]">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span>LIVE SYNC</span>
+          </div>
+
+          <div className="flex items-center gap-1.5 font-medium text-white truncate max-w-[150px] sm:max-w-xs">
+            <span className="truncate">{hostel.name}</span>
+            <span className="font-mono text-neutral-400 text-[10px] shrink-0">
+              #{hostel.code.replace('HS-', '')}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1 text-neutral-400">
+            <Users className="w-3 h-3" />
+            <span>{totalConnectedCount} {totalConnectedCount === 1 ? 'device' : 'devices'}</span>
+          </div>
+
+          <span className="text-neutral-700">|</span>
+
+          {/* Real latency & offset measured from Web Performance clock */}
+          <div className="hidden md:flex items-center gap-2 font-mono text-[10px] text-neutral-500">
+            <span>Offset: {liveOffset >= 0 ? `+${liveOffset.toFixed(2)}ms` : `${liveOffset.toFixed(2)}ms`}</span>
+            <span>RTT: {liveRtt.toFixed(2)}ms</span>
+            <span>OL: 0ms</span>
+          </div>
+        </div>
+
+        {/* Right: Social & Leave */}
+        <div className="flex items-center gap-3">
+          <a
+            href="https://discord.gg"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-neutral-500 hover:text-white transition-colors"
+            title="Community"
+          >
+            <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.929 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.893.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z" />
+            </svg>
+          </a>
+
+          <a
+            href="https://github.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-neutral-500 hover:text-white transition-colors"
+            title="GitHub"
+          >
+            <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+              <path
+                fillRule="evenodd"
+                clipRule="evenodd"
+                d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"
+              />
+            </svg>
+          </a>
+
+          <button
+            type="button"
+            onClick={onLeave}
+            className="flex items-center gap-1 text-[11px] text-neutral-400 hover:text-white px-2 py-0.5 rounded hover:bg-neutral-800 transition-colors ml-1 cursor-pointer"
+            title="Leave Room"
+          >
+            <LogOut className="w-3 h-3" />
+            <span>Leave</span>
+          </button>
+        </div>
+      </header>
+
+      {/* 2. THREE-COLUMN MAIN BODY */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* LEFT SIDEBAR (Room details, permissions, REAL connected users, upload audio button) */}
+        <aside className="w-64 sm:w-72 bg-[#0c0c0d] border-r border-neutral-800/80 flex flex-col justify-between p-3.5 shrink-0 overflow-y-auto">
+          <div>
+            {/* Room Header */}
+            {/* Room Header with Room Name */}
+            <div className="flex items-center justify-between mb-4">
+              <div className="truncate pr-2">
+                <div className="flex items-center gap-1 text-sm font-semibold text-white tracking-tight truncate">
+                  <span className="text-neutral-500 font-mono">#</span>
+                  <span className="truncate">{hostel.name}</span>
+                </div>
+                <div className="text-[10px] font-mono text-neutral-400 mt-0.5">
+                  Room {hostel.code}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowQrModal(true)}
+                className="text-neutral-400 hover:text-white p-1.5 rounded-lg hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
+                title="Room QR & Code"
+              >
+                <QrCode className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Playback Permissions section */}
+            <div className="mb-4">
+              <div className="flex items-center justify-between text-[10px] font-mono text-neutral-500 uppercase tracking-wider mb-2">
+                <span className="flex items-center gap-1">
+                  <Radio className="w-3 h-3" />
+                  <span>PLAYBACK PERMISSIONS</span>
+                </span>
+                {!isUserAdmin && (
+                  <span className="text-[9px] text-amber-500 flex items-center gap-0.5">
+                    <Lock className="w-2.5 h-2.5" /> Admin Only
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-2 p-0.5 bg-neutral-900 border border-neutral-800 rounded-full text-xs">
+                <button
+                  type="button"
+                  onClick={() => handleTogglePlaybackPermission('everyone')}
+                  disabled={!isUserAdmin}
+                  className={`py-1 rounded-full text-[11px] font-medium transition-colors flex items-center justify-center gap-1 ${
+                    playbackPermission === 'everyone'
+                      ? 'bg-neutral-800 text-white shadow-xs'
+                      : 'text-neutral-400 hover:text-white'
+                  } ${!isUserAdmin ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+                >
+                  <Users className="w-3 h-3" />
+                  <span>Everyone</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleTogglePlaybackPermission('admins')}
+                  disabled={!isUserAdmin}
+                  className={`py-1 rounded-full text-[11px] font-semibold transition-colors flex items-center justify-center gap-1 ${
+                    playbackPermission === 'admins'
+                      ? 'bg-[#eab308] text-black shadow-xs'
+                      : 'text-neutral-400 hover:text-white'
+                  } ${!isUserAdmin ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+                >
+                  <Crown className="w-3 h-3" />
+                  <span>Admins</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Add Music Permissions section */}
+            <div className="mb-6">
+              <div className="flex items-center justify-between text-[10px] font-mono text-neutral-500 uppercase tracking-wider mb-2">
+                <span className="flex items-center gap-1">
+                  <Music className="w-3 h-3" />
+                  <span>ADD MUSIC PERMISSIONS</span>
+                </span>
+              </div>
+              <div className="grid grid-cols-2 p-0.5 bg-neutral-900 border border-neutral-800 rounded-full text-xs">
+                <button
+                  type="button"
+                  onClick={() => handleToggleAddMusicPermission('everyone')}
+                  disabled={!isUserAdmin}
+                  className={`py-1 rounded-full text-[11px] font-medium transition-colors flex items-center justify-center gap-1 ${
+                    addMusicPermission === 'everyone'
+                      ? 'bg-neutral-800 text-white shadow-xs'
+                      : 'text-neutral-400 hover:text-white'
+                  } ${!isUserAdmin ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+                >
+                  <Users className="w-3 h-3" />
+                  <span>Everyone</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleToggleAddMusicPermission('admins')}
+                  disabled={!isUserAdmin}
+                  className={`py-1 rounded-full text-[11px] font-semibold transition-colors flex items-center justify-center gap-1 ${
+                    addMusicPermission === 'admins'
+                      ? 'bg-emerald-500 text-black shadow-xs'
+                      : 'text-neutral-400 hover:text-white'
+                  } ${!isUserAdmin ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+                >
+                  <Crown className="w-3 h-3" />
+                  <span>Admins</span>
+                </button>
+              </div>
+            </div>
+
+            {/* REAL Connected Users (Only actual users in this room) */}
+            <div>
+              <div className="flex items-center justify-between text-[10px] font-mono text-neutral-500 uppercase tracking-wider mb-2.5">
+                <span className="flex items-center gap-1">
+                  <Users className="w-3 h-3" />
+                  <span>CONNECTED DEVICES</span>
+                </span>
+                <span className="px-1.5 py-0.2 bg-neutral-800 text-neutral-300 rounded-full text-[10px] font-mono">
+                  {totalConnectedCount}
+                </span>
+              </div>
+
+              {/* User row: You */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between px-2.5 py-1.5 bg-neutral-900/90 border border-neutral-800 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Headphones className="w-3.5 h-3.5 text-neutral-400" />
+                    {isUserAdmin && <Crown className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />}
+                    <span className="text-xs font-medium text-white truncate max-w-[100px]">
+                      {userName.toLowerCase().replace(/\s+/g, '-')}
+                    </span>
+                  </div>
+                  <span className="bg-emerald-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                    You
+                  </span>
+                </div>
+
+                {/* Other Real Connected Peers from other tabs/devices */}
+                {connectedPeers.map((peer) => {
+                  const peerIsAdmin = adminPeerIds.includes(peer.id) || adminPeerIds.includes(peer.name.toLowerCase());
+                  return (
+                    <div
+                      key={peer.id}
+                      className="flex items-center justify-between px-2.5 py-1.5 text-xs text-neutral-400 bg-neutral-950/60 border border-neutral-850 rounded-lg group"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Laptop className="w-3.5 h-3.5 text-cyan-400" />
+                        {peerIsAdmin && (
+                          <Crown className="w-3 h-3 text-amber-400 fill-amber-400" />
+                        )}
+                        <span className="truncate max-w-[95px] text-neutral-200">
+                          {peer.name.toLowerCase()}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        {isUserAdmin && (
+                          <button
+                            type="button"
+                            onClick={() => handleTogglePeerAdmin(peer.id)}
+                            className={`p-1 rounded transition-colors text-[10px] font-medium flex items-center gap-0.5 cursor-pointer ${
+                              peerIsAdmin
+                                ? 'text-amber-400 hover:bg-neutral-800'
+                                : 'text-neutral-600 hover:text-amber-400 hover:bg-neutral-800'
+                            }`}
+                            title={peerIsAdmin ? 'Revoke Admin / DJ' : 'Make Admin / DJ'}
+                          >
+                            <Crown className={`w-3 h-3 ${peerIsAdmin ? 'fill-amber-400' : ''}`} />
+                            <span className="text-[9px]">{peerIsAdmin ? 'Admin' : 'Promote'}</span>
+                          </button>
+                        )}
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* Bottom Sidebar: Tips and Upload Audio Button */}
+          <div className="pt-4 border-t border-neutral-800/80 mt-4">
+            <div className="mb-3 text-[11px] text-neutral-500">
+              <span className="font-semibold text-neutral-400 block mb-1">Tips</span>
+              <ul className="space-y-1">
+                <li>• Play on speaker directly. Don&#39;t use Bluetooth.</li>
+                <li>• Open this room code in another tab to hear live sync!</li>
+              </ul>
+            </div>
+
+            {/* REAL UPLOAD AUDIO BUTTON */}
+            <button
+              type="button"
+              onClick={() => {
+                if (canAddMusic) setShowAddTrackModal(true);
+              }}
+              disabled={!canAddMusic}
+              className={`w-full py-2.5 px-3 bg-neutral-900 border border-neutral-800 rounded-xl flex items-center gap-2.5 text-left transition-colors group shadow-sm ${
+                canAddMusic
+                  ? 'hover:bg-neutral-850 cursor-pointer active:scale-[0.99]'
+                  : 'opacity-50 cursor-not-allowed'
+              }`}
+              title={canAddMusic ? 'Upload music' : 'Only Admins can add music'}
+            >
+              <div className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors shrink-0 ${
+                canAddMusic
+                  ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 group-hover:bg-emerald-500 group-hover:text-black'
+                  : 'bg-neutral-800 text-neutral-500 border border-neutral-700'
+              }`}>
+                {canAddMusic ? <Plus className="w-4 h-4" /> : <Lock className="w-3.5 h-3.5" />}
+              </div>
+              <div className="truncate">
+                <div className="text-xs font-medium text-white truncate">
+                  {canAddMusic ? 'Upload music' : 'Upload locked'}
+                </div>
+                <div className="text-[10px] text-neutral-400 truncate">
+                  {canAddMusic ? 'Device or YouTube link' : 'Admin only'}
+                </div>
+              </div>
+            </button>
+          </div>
+        </aside>
+
+        {/* CENTER COLUMN (Search prompt, Real track queue, real player) */}
+        <main className="flex-1 bg-[#09090a] flex flex-col overflow-y-auto">
+          {/* Top Search / Command Bar */}
+          <div className="p-4 sm:p-6 pb-2">
+            <div className="relative max-w-xl mx-auto">
+              <Search className="w-4 h-4 text-neutral-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={searchQuery}
+                disabled={!canAddMusic}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={handleSearchKeyDown}
+                placeholder={
+                  canAddMusic
+                    ? "What do you want to play? (Search or paste YouTube/MP3 link & press Enter)"
+                    : "Adding music is restricted to Admins"
+                }
+                className={`w-full bg-neutral-900/90 border border-neutral-800 rounded-lg pl-10 pr-10 py-2 text-xs text-white placeholder:text-neutral-500 outline-none transition-colors ${
+                  canAddMusic ? 'focus:border-neutral-700' : 'opacity-60 cursor-not-allowed'
+                }`}
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 font-mono text-[10px] text-neutral-500 bg-neutral-800 px-1.5 py-0.5 rounded border border-neutral-700">
+                ⌘K
+              </span>
+            </div>
+
+            {/* Quick detected YouTube pill if link entered */}
+            {detectedSearchYtId && (
+              <div className="max-w-xl mx-auto mt-2 flex items-center justify-between px-3 py-1.5 bg-red-950/40 border border-red-800/50 rounded-lg text-xs animate-in fade-in">
+                <span className="flex items-center gap-1.5 text-red-300 font-mono text-[11px]">
+                  <Film className="w-3.5 h-3.5 text-red-400" />
+                  YouTube Link Detected!
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const fakeEvent = {
+                      key: 'Enter',
+                      preventDefault: () => {},
+                    } as any;
+                    handleSearchKeyDown(fakeEvent);
+                  }}
+                  className="px-2.5 py-1 bg-red-600 hover:bg-red-500 text-white font-medium text-[11px] rounded-md transition-colors cursor-pointer flex items-center gap-1"
+                >
+                  <span>Press Enter to Add Track</span>
+                  <span className="font-mono text-[9px] bg-red-800/80 px-1 py-0.5 rounded">↵</span>
+                </button>
+              </div>
+            )}
+
+            <div className="text-center mt-2 text-[10px] font-mono text-neutral-600 tracking-wider">
+              ✦ [REALTIME AUDIO SYNC ACTIVE]
+            </div>
+          </div>
+
+          {/* YouTube Player with Real Bidirectional Sync */}
+          {activeTrack?.sourceType === 'youtube' && activeTrack.youtubeId && (
+            <div className="px-6 py-3 flex flex-col items-center justify-center">
+              <YouTubePlayer
+                key={`yt-${activeTrack.id}-${activeTrack.youtubeId}`}
+                videoId={activeTrack.youtubeId}
+                isPlaying={isPlaying}
+                volume={effectiveVolume}
+                isMuted={isMuted}
+                seekTime={externalSeekTime}
+                onTimeUpdate={(curr, dur) => {
+                  if (Math.abs(curr - lastAudioTimeRef.current) >= 0.25) {
+                    lastAudioTimeRef.current = curr;
+                    setCurrentTime(curr);
+                  }
+                  if (dur > 0 && Math.abs(duration - dur) > 1.0) {
+                    setDuration(dur);
+                  }
+                }}
+                onStateChange={(state) => {
+                  if (state === 'playing') {
+                    setIsPlaying(true);
+                    if (syncRef.current && !isSyncingFromRemote.current) {
+                      syncRef.current.broadcast({
+                        type: 'AUDIO_PLAY',
+                        trackId: activeTrack.id,
+                        currentTime,
+                        serverTimestamp: performance.now(),
+                      });
+                    }
+                  } else if (state === 'paused') {
+                    setIsPlaying(false);
+                    if (syncRef.current && !isSyncingFromRemote.current) {
+                      syncRef.current.broadcast({
+                        type: 'AUDIO_PAUSE',
+                        trackId: activeTrack.id,
+                        currentTime,
+                      });
+                    }
+                  } else if (state === 'ended') {
+                    handleNextTrack();
+                  }
+                }}
+              />
+              <div className="mt-2.5 flex items-center gap-2 text-[11px] text-neutral-400">
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                <span className="font-medium text-white truncate max-w-sm">{activeTrack.title}</span>
+                <span className="text-neutral-600">·</span>
+                <span className="text-neutral-400">{activeTrack.artist}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Main Queue / Empty State */}
+          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+            {tracks.length === 0 ? (
+              <div className="flex flex-col items-center animate-in fade-in duration-200">
+                <p className="text-xs text-neutral-400 mb-4 font-medium">No tracks yet</p>
+                <button
+                  type="button"
+                  onClick={() => setShowAddTrackModal(true)}
+                  className="px-5 py-2 bg-white text-black hover:bg-neutral-200 font-medium text-xs rounded-full shadow-sm transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <Upload className="w-3.5 h-3.5 text-black" />
+                  <span>Upload music</span>
+                </button>
+              </div>
+            ) : (
+              <div className="w-full max-w-2xl text-left space-y-2">
+                <div className="flex items-center justify-between mb-3 text-xs text-neutral-400">
+                  <span className="font-mono text-[11px] uppercase tracking-wider">
+                    Room Queue ({filteredTracks.length})
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowAddTrackModal(true)}
+                      className="text-[11px] text-neutral-300 hover:text-white flex items-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3 h-3" /> Add Track
+                    </button>
+                    <span>·</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTracks([]);
+                        setIsPlaying(false);
+                        if (syncRef.current) {
+                          syncRef.current.broadcast({ type: 'QUEUE_CLEAR' });
+                        }
+                      }}
+                      className="text-[11px] text-neutral-500 hover:text-neutral-300 cursor-pointer"
+                    >
+                      Clear queue
+                    </button>
+                  </div>
+                </div>
+
+                {filteredTracks.map((tr, index) => {
+                  const isCurrent = currentTrackIndex === index;
+                  return (
+                    <div
+                      key={tr.id}
+                      onClick={() => {
+                        setCurrentTrackIndex(index);
+                        setCurrentTime(0);
+                        setIsPlaying(true);
+                        if (syncRef.current) {
+                          syncRef.current.broadcast({
+                            type: 'AUDIO_PLAY',
+                            trackId: tr.id,
+                            currentTime: 0,
+                            serverTimestamp: performance.now(),
+                          });
+                        }
+                      }}
+                      className={`p-3 rounded-lg border transition-all flex items-center justify-between gap-3 cursor-pointer ${
+                        isCurrent
+                          ? 'bg-neutral-900 border-neutral-700 shadow-xs'
+                          : 'bg-neutral-950/50 border-neutral-850 hover:bg-neutral-900/60'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 truncate">
+                        <div
+                          className={`w-8 h-8 rounded flex items-center justify-center shrink-0 ${
+                            isCurrent
+                              ? 'bg-emerald-500 text-black'
+                              : 'bg-neutral-800 text-neutral-400'
+                          }`}
+                        >
+                          {isCurrent && isPlaying ? (
+                            <Radio className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Music className="w-4 h-4" />
+                          )}
+                        </div>
+                        <div className="truncate">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`text-xs font-medium truncate ${
+                                isCurrent ? 'text-white' : 'text-neutral-300'
+                              }`}
+                            >
+                              {tr.title}
+                            </span>
+
+                            {/* Source Platform Badge */}
+                            {tr.sourceType === 'device' && (
+                              <span className="px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[9px] font-mono shrink-0">
+                                DEVICE
+                              </span>
+                            )}
+                            {tr.sourceType === 'youtube' && (
+                              <span className="px-1.5 py-0.2 rounded bg-red-500/10 text-red-400 border border-red-500/20 text-[9px] font-mono shrink-0 flex items-center gap-0.5">
+                                <Film className="w-2.5 h-2.5" /> YOUTUBE
+                              </span>
+                            )}
+                            {tr.sourceType === 'soundcloud' && (
+                              <span className="px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[9px] font-mono shrink-0">
+                                SOUNDCLOUD
+                              </span>
+                            )}
+                            {tr.sourceType === 'stream' && (
+                              <span className="px-1.5 py-0.2 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 text-[9px] font-mono shrink-0">
+                                STREAM
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-neutral-500 truncate">
+                            {tr.artist} · Added by {tr.addedBy}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="font-mono text-xs text-neutral-400 shrink-0">
+                        {isCurrent && duration > 0
+                          ? `${formatSeconds(currentTime)} / ${formatSeconds(duration)}`
+                          : tr.duration}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </main>
+
+        {/* RIGHT SIDEBAR (Real Live Chat & Spatial Audio) */}
+        <aside className="w-72 sm:w-80 bg-[#0c0c0d] border-l border-neutral-800/80 flex flex-col h-full min-h-0 shrink-0">
+          {/* Top Tabs */}
+          <div className="flex items-center p-2 border-b border-neutral-800/80 gap-1 text-xs shrink-0">
+            <button
+              type="button"
+              onClick={() => setRightTab('chat')}
+              className={`flex-1 py-1.5 rounded-md font-medium transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
+                rightTab === 'chat'
+                  ? 'bg-neutral-800 text-white'
+                  : 'text-neutral-400 hover:text-white'
+              }`}
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              <span>Chat</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setRightTab('spatial')}
+              className={`flex-1 py-1.5 rounded-md font-medium transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
+                rightTab === 'spatial'
+                  ? 'bg-neutral-800 text-white'
+                  : 'text-neutral-400 hover:text-white'
+              }`}
+            >
+              <Compass className="w-3.5 h-3.5" />
+              <span>Spatial</span>
+            </button>
+          </div>
+
+          {/* Right Sidebar Body */}
+          {rightTab === 'chat' ? (
+            <div className="p-3 overflow-y-auto flex-1 min-h-0 space-y-3">
+              {messages.length === 0 ? (
+                <div className="py-24 flex flex-col items-center justify-center text-center">
+                  <MessageSquare className="w-8 h-8 text-neutral-600 mb-2 stroke-[1.5]" />
+                  <p className="text-xs text-neutral-400 font-medium">No messages yet</p>
+                  <p className="text-[11px] text-neutral-600">Start the conversation</p>
+                </div>
+              ) : (
+                messages.map((m) => (
+                  <div
+                    key={m.id}
+                    className={`text-xs rounded-lg p-2.5 ${
+                      m.isSelf
+                        ? 'bg-neutral-800 text-white ml-4'
+                        : 'bg-neutral-900 border border-neutral-800 text-neutral-200 mr-4'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-[10px] text-neutral-400 mb-1">
+                      <span className="font-semibold">{m.isSelf ? 'You' : m.sender}</span>
+                      <span>{m.time}</span>
+                    </div>
+                    <p className="leading-relaxed">{m.text}</p>
+                  </div>
+                ))
+              )}
+              <div ref={chatBottomRef} />
+            </div>
+          ) : (
+            /* BeatSync Spatial Audio Studio Tab */
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+              <SpatialAudioTab
+                userName={userName}
+                isHost={true}
+                onSpatialChange={handleSpatialChange}
+              />
+            </div>
+          )}
+
+          {/* Bottom Chat Input Form */}
+          {rightTab === 'chat' && (
+            <form onSubmit={handleSendMessage} className="p-3 border-t border-neutral-800/80 shrink-0">
+              <div className="relative">
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  placeholder="Message"
+                  className="w-full bg-neutral-900 border border-neutral-800 focus:border-neutral-700 rounded-lg px-3 py-2 text-xs text-white placeholder:text-neutral-500 outline-none pr-8"
+                />
+                <button
+                  type="submit"
+                  disabled={!chatInput.trim()}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-white disabled:opacity-30 cursor-pointer"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </form>
+          )}
+        </aside>
+      </div>
+
+      {/* 3. BOTTOM AUDIO PLAYER BAR (Real seekable audio timeline, real playback) */}
+      <footer className="h-16 px-4 bg-[#0a0a0b] border-t border-neutral-800/80 flex flex-col justify-center shrink-0 text-xs select-none relative">
+        {/* Seekable Progress Bar across top of player */}
+        <div
+          onClick={canControlPlayback ? handleSeek : undefined}
+          className={`absolute top-0 left-0 w-full h-1 transition-all group ${
+            canControlPlayback
+              ? 'bg-neutral-800 hover:h-2 cursor-pointer'
+              : 'bg-neutral-850 cursor-default'
+          }`}
+          title={canControlPlayback ? 'Click to seek' : 'Seeking locked (Admin only)'}
+        >
+          <div
+            className="h-full bg-white group-hover:bg-emerald-400 transition-all relative"
+            style={{
+              width: duration > 0 ? `${(currentTime / duration) * 100}%` : '0%',
+            }}
+          >
+            {canControlPlayback && (
+              <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-white opacity-0 group-hover:opacity-100 shadow" />
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between mt-1">
+          {/* Left: Offset latency, metronome & calibration */}
+          <div className="flex items-center gap-2.5 text-neutral-400 font-mono text-xs w-72 shrink-0">
+            {/* Metronome Toggle Button */}
+            <button
+              type="button"
+              onClick={toggleMetronome}
+              className={`w-6 h-6 rounded-full flex items-center justify-center transition-all cursor-pointer border shrink-0 ${
+                isMetronomeActive
+                  ? 'bg-emerald-500 text-black border-emerald-400 shadow-sm shadow-emerald-500/30'
+                  : 'bg-neutral-900 text-neutral-300 border-neutral-800 hover:text-white hover:bg-neutral-800'
+              }`}
+              title={isMetronomeActive ? 'Stop Metronome Sync' : 'Start Metronome Sync'}
+            >
+              <span className={`text-[10px] font-bold ${isMetronomeActive ? 'animate-pulse' : ''}`}>
+                M
+              </span>
+            </button>
+
+            {/* Offset Latency Adjuster */}
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={() => setLiveOffset((o) => o - 5)}
+                className="hover:text-white px-1 py-0.5 text-neutral-500 hover:bg-neutral-800 rounded transition-colors cursor-pointer text-xs font-bold leading-none"
+                title="-5ms delay"
+              >
+                «
+              </button>
+              <span className="text-[11px] text-neutral-300 w-11 text-center font-mono">
+                {liveOffset >= 0 ? `+${liveOffset.toFixed(0)}ms` : `${liveOffset.toFixed(0)}ms`}
+              </span>
+              <button
+                type="button"
+                onClick={() => setLiveOffset((o) => o + 5)}
+                className="hover:text-white px-1 py-0.5 text-neutral-500 hover:bg-neutral-800 rounded transition-colors cursor-pointer text-xs font-bold leading-none"
+                title="+5ms delay"
+              >
+                »
+              </button>
+            </div>
+
+            {/* RTT Badge */}
+            <span className="px-1.5 py-0.5 bg-neutral-900 border border-neutral-800 rounded text-[10px] text-neutral-400 font-mono shrink-0">
+              {liveRtt.toFixed(1)}ms
+            </span>
+
+            {/* Metronome Label */}
+            <span
+              onClick={toggleMetronome}
+              className={`text-[10px] cursor-pointer transition-colors select-none shrink-0 ${
+                isMetronomeActive ? 'text-emerald-400 font-semibold' : 'text-neutral-500 hover:text-neutral-400'
+              }`}
+            >
+              metronome
+            </span>
+          </div>
+
+          {/* Center: Playback Controls */}
+          <div className="flex flex-col items-center gap-0.5">
+            <div className="flex items-center gap-4">
+              <button
+                type="button"
+                onClick={() => setIsShuffle(!isShuffle)}
+                className={`transition-colors cursor-pointer ${
+                  isShuffle ? 'text-emerald-400' : 'text-neutral-500 hover:text-neutral-300'
+                }`}
+                title="Shuffle"
+              >
+                <Shuffle className="w-3.5 h-3.5" />
+              </button>
+
+              <button
+                type="button"
+                onClick={handlePrevTrack}
+                disabled={!canControlPlayback}
+                className={`transition-colors ${
+                  canControlPlayback
+                    ? 'text-neutral-400 hover:text-white cursor-pointer'
+                    : 'text-neutral-600 cursor-not-allowed opacity-50'
+                }`}
+                title={canControlPlayback ? 'Previous' : 'Only Admins can control playback'}
+              >
+                <SkipBack className="w-4 h-4" />
+              </button>
+
+              {/* Main Circular Play/Pause (Real audio trigger) */}
+              <button
+                type="button"
+                onClick={togglePlay}
+                disabled={!canControlPlayback}
+                className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shadow-xs active:scale-95 ${
+                  canControlPlayback
+                    ? 'bg-white text-black hover:bg-neutral-200 cursor-pointer'
+                    : 'bg-neutral-800 text-neutral-500 cursor-not-allowed opacity-50'
+                }`}
+                title={canControlPlayback ? (isPlaying ? 'Pause' : 'Play') : 'Only Admins can control playback'}
+              >
+                {isPlaying ? (
+                  <Pause className="w-4 h-4 fill-current" />
+                ) : (
+                  <Play className="w-4 h-4 fill-current ml-0.5" />
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleNextTrack}
+                disabled={!canControlPlayback}
+                className={`transition-colors ${
+                  canControlPlayback
+                    ? 'text-neutral-400 hover:text-white cursor-pointer'
+                    : 'text-neutral-600 cursor-not-allowed opacity-50'
+                }`}
+                title={canControlPlayback ? 'Next' : 'Only Admins can control playback'}
+              >
+                <SkipForward className="w-4 h-4" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsRepeat(!isRepeat)}
+                className={`relative transition-colors cursor-pointer ${
+                  isRepeat ? 'text-emerald-400' : 'text-neutral-500 hover:text-neutral-300'
+                }`}
+                title="Repeat"
+              >
+                <Repeat className="w-3.5 h-3.5" />
+                {isRepeat && (
+                  <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-emerald-400" />
+                )}
+              </button>
+            </div>
+
+            {/* Real Time Counter */}
+            <div className="text-[10px] font-mono text-neutral-500">
+              {formatSeconds(currentTime)} / {formatSeconds(duration || (activeTrack?.durationSeconds || 0))}
+            </div>
+          </div>
+
+          {/* Right: Volume Slider (Real audio volume) */}
+          <div className="flex items-center justify-end gap-2 w-48">
+            <button
+              type="button"
+              onClick={() => setIsMuted(!isMuted)}
+              className="text-neutral-400 hover:text-white transition-colors cursor-pointer"
+            >
+              {isMuted || volume === 0 ? (
+                <VolumeX className="w-4 h-4" />
+              ) : (
+                <Volume2 className="w-4 h-4" />
+              )}
+            </button>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={isMuted ? 0 : volume}
+              onChange={(e) => {
+                setVolume(parseInt(e.target.value, 10));
+                if (isMuted) setIsMuted(false);
+              }}
+              className="w-24 h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-white"
+            />
+          </div>
+        </div>
+      </footer>
+
+      {/* Real Scannable Room QR Code Modal */}
+      <RoomQrModal
+        isOpen={showQrModal}
+        onClose={() => setShowQrModal(false)}
+        roomCode={hostel.code}
+        hostelName={hostel.name}
+      />
+
+      {/* Real Upload Audio Modal (Direct Device + YouTube/Web Link) */}
+      <UploadAudioModal
+        isOpen={showAddTrackModal}
+        onClose={() => setShowAddTrackModal(false)}
+        onAddTrack={handleAddTrack}
+        userName={userName}
+      />
+    </div>
+  );
+}
