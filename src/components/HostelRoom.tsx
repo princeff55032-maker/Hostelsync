@@ -99,8 +99,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
 
   const isUserAdmin =
     isRoomHost ||
-    (syncRef.current?.peerId ? adminPeerIds.includes(syncRef.current.peerId) : false) ||
-    adminPeerIds.some((a) => a.toLowerCase() === effectiveUserName.toLowerCase());
+    (syncRef.current?.peerId ? adminPeerIds.includes(syncRef.current.peerId) : false);
 
   // References for unload & refresh listeners
   const connectedPeersRef = useRef<Peer[]>([]);
@@ -417,7 +416,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
           setPromotedToAdmin(true);
         }
         setAdminPeerIds((prev) => {
-          const updated = [...prev, event.newAdminPeerId, event.newAdminName.toLowerCase()];
+          const updated = [...prev, event.newAdminPeerId];
           return Array.from(new Set(updated));
         });
 
@@ -611,7 +610,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
             const hasAliveAdmin = remaining.some((p) => adminPeerIdsRef.current.includes(p.id) || p.isHost);
             if (!hasAliveAdmin) {
               setPromotedToAdmin(true);
-              const nextAdmins = [syncRef.current.peerId, effectiveUserName.toLowerCase()];
+              const nextAdmins = [syncRef.current.peerId];
               setAdminPeerIds(nextAdmins);
               syncRef.current.broadcast({
                 type: 'PERMISSIONS_UPDATE',
@@ -1536,7 +1535,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
 
                 {/* Other Real Connected Peers from other tabs/devices */}
                 {connectedPeers.map((peer) => {
-                  const peerIsAdmin = adminPeerIds.includes(peer.id) || adminPeerIds.includes(peer.name.toLowerCase());
+                  const peerIsAdmin = adminPeerIds.includes(peer.id);
                   return (
                     <div
                       key={peer.id}
