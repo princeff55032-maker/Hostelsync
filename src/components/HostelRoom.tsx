@@ -84,16 +84,17 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
   const [addMusicPermission, setAddMusicPermission] = useState<'everyone' | 'admins'>('everyone');
   const [adminPeerIds, setAdminPeerIds] = useState<string[]>([]);
 
+  const effectiveUserName = userName?.trim() || 'Resident';
+
   // Room host & Admin detection
   const isRoomHost =
-    hostel.warden?.toLowerCase() === userName.toLowerCase() ||
-    userName.toLowerCase() === 'prince' ||
+    Boolean(hostel.warden && effectiveUserName && hostel.warden.toLowerCase() === effectiveUserName.toLowerCase()) ||
     syncRef.current?.isHost === true;
 
   const isUserAdmin =
     isRoomHost ||
     adminPeerIds.includes(syncRef.current?.peerId || '') ||
-    adminPeerIds.includes(userName.toLowerCase());
+    adminPeerIds.includes(effectiveUserName.toLowerCase());
 
   const canControlPlayback = playbackPermission === 'everyone' || isUserAdmin;
   const canAddMusic = addMusicPermission === 'everyone' || isUserAdmin;
@@ -183,7 +184,7 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
 
   // Initialize Real Synchronization Channel
   useEffect(() => {
-    const sync = new RoomSync(hostel.code, userName, true);
+    const sync = new RoomSync(hostel.code, effectiveUserName, true);
     syncRef.current = sync;
 
     sync.setEventHandler((event: SyncEvent) => {
@@ -204,7 +205,7 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
       clearInterval(statsInterval);
       sync.close();
     };
-  }, [hostel.code, userName]);
+  }, [hostel.code, effectiveUserName]);
 
   // Handle incoming real-time events from other tabs / devices
   const handleRemoteSyncEvent = (event: SyncEvent) => {
@@ -518,7 +519,7 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
       artist: data.artist,
       duration: data.duration,
       durationSeconds: data.durationSeconds,
-      addedBy: userName,
+      addedBy: effectiveUserName,
       sourceType: data.sourceType,
       url: data.url,
       file: data.file,
@@ -574,7 +575,7 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
 
     const newMsg: ChatMessage = {
       id: `msg-${Date.now()}`,
-      sender: userName,
+      sender: effectiveUserName,
       text: chatInput.trim(),
       time: timeStr,
       isSelf: true,
@@ -648,7 +649,7 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
         artist,
         duration: '03:45',
         durationSeconds: 225,
-        addedBy: userName,
+        addedBy: effectiveUserName,
         sourceType: 'youtube',
         url: query,
         youtubeId: ytId,
@@ -674,7 +675,7 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
         const chatNotification: ChatMessage = {
           id: `msg-add-${Date.now()}`,
           sender: 'HostelSync',
-          text: `${userName} added "${title}" via YouTube link`,
+          text: `${effectiveUserName} added "${title}" via YouTube link`,
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           isSelf: false,
         };
@@ -901,7 +902,7 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
                     <Headphones className="w-3.5 h-3.5 text-neutral-400" />
                     {isUserAdmin && <Crown className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />}
                     <span className="text-xs font-medium text-white truncate max-w-[100px]">
-                      {userName.toLowerCase().replace(/\s+/g, '-')}
+                      {effectiveUserName.toLowerCase().replace(/\s+/g, '-')}
                     </span>
                   </div>
                   <span className="bg-emerald-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
@@ -1300,7 +1301,7 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
             /* BeatSync Spatial Audio Studio Tab */
             <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
               <SpatialAudioTab
-                userName={userName}
+                userName={effectiveUserName}
                 isHost={true}
                 onSpatialChange={handleSpatialChange}
               />
@@ -1536,7 +1537,7 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
         isOpen={showAddTrackModal}
         onClose={() => setShowAddTrackModal(false)}
         onAddTrack={handleAddTrack}
-        userName={userName}
+        userName={effectiveUserName}
       />
     </div>
   );

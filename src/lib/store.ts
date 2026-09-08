@@ -11,7 +11,7 @@ const STORAGE_KEYS = {
 };
 
 export function useHostelStore() {
-  const [userName, setUserName] = useState<string>('Prince');
+  const [userName, setUserName] = useState<string>('');
   const [hostels, setHostels] = useState<Record<string, Hostel>>(INITIAL_HOSTELS);
   const [activeHostelCode, setActiveHostelCode] = useState<string | null>(null);
   const [isInitialized, setIsInitialized] = useState<boolean>(false);
@@ -20,10 +20,11 @@ export function useHostelStore() {
   useEffect(() => {
     try {
       const storedName = localStorage.getItem(STORAGE_KEYS.USER_NAME);
-      if (storedName) {
+      if (storedName && storedName !== 'Prince' && storedName !== 'Vikram') {
         setUserName(storedName);
       } else {
-        localStorage.setItem(STORAGE_KEYS.USER_NAME, 'Prince');
+        localStorage.removeItem(STORAGE_KEYS.USER_NAME);
+        setUserName('');
       }
 
       const storedHostels = localStorage.getItem(STORAGE_KEYS.HOSTELS);
@@ -51,22 +52,19 @@ export function useHostelStore() {
   }, []);
 
   const changeUserName = (name: string) => {
-    const clean = name.trim() || 'Resident';
+    const clean = name.trim();
     setUserName(clean);
     try {
-      localStorage.setItem(STORAGE_KEYS.USER_NAME, clean);
+      if (clean) {
+        localStorage.setItem(STORAGE_KEYS.USER_NAME, clean);
+      } else {
+        localStorage.removeItem(STORAGE_KEYS.USER_NAME);
+      }
     } catch {}
   };
 
   const regenerateUserName = () => {
-    let next = getRandomName();
-    while (next === userName) {
-      next = getRandomName();
-    }
-    setUserName(next);
-    try {
-      localStorage.setItem(STORAGE_KEYS.USER_NAME, next);
-    } catch {}
+    // Left for backwards-compatibility if referenced
   };
 
   const findHostel = (code: string): Hostel | null => {
@@ -162,10 +160,25 @@ export function useHostelStore() {
 
   const joinHostel = (code: string) => {
     const formatted = code.trim().toUpperCase();
-    if (hostels[formatted]) {
-      setActiveHostelCode(formatted);
+    const cleanCode = formatted.startsWith('HS-') ? formatted : `HS-${formatted}`;
+
+    let targetHostel = hostels[cleanCode];
+    if (!targetHostel) {
+      const found = findHostel(cleanCode);
+      if (found) {
+        targetHostel = found;
+        const updated = { ...hostels, [cleanCode]: found };
+        setHostels(updated);
+        try {
+          localStorage.setItem(STORAGE_KEYS.HOSTELS, JSON.stringify(updated));
+        } catch {}
+      }
+    }
+
+    if (targetHostel) {
+      setActiveHostelCode(cleanCode);
       try {
-        localStorage.setItem(STORAGE_KEYS.ACTIVE_CODE, formatted);
+        localStorage.setItem(STORAGE_KEYS.ACTIVE_CODE, cleanCode);
       } catch {}
       return true;
     }
@@ -233,7 +246,9 @@ export function useHostelStore() {
     } catch {}
   };
 
-  const activeHostel: Hostel | null = activeHostelCode ? hostels[activeHostelCode] || null : null;
+  const activeHostel: Hostel | null = activeHostelCode
+    ? hostels[activeHostelCode] || findHostel(activeHostelCode) || null
+    : null;
 
   return {
     isInitialized,

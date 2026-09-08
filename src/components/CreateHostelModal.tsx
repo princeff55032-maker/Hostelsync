@@ -102,6 +102,7 @@ export function CreateHostelModal({
                 <input
                   type="text"
                   required
+                  placeholder="Enter your name"
                   value={residentName}
                   onChange={(e) => setResidentName(e.target.value)}
                   className="w-full bg-neutral-800/80 border border-neutral-700 focus:border-white focus:bg-neutral-800 rounded-md px-3 py-2 text-sm text-white placeholder:text-neutral-500 outline-none transition-colors"

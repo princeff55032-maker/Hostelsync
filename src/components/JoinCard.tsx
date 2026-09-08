@@ -3,15 +3,14 @@
 import React from 'react';
 import { PlusCircle } from 'lucide-react';
 import { CodeInput } from './CodeInput';
-import { IdentitySelector } from './IdentitySelector';
 import { Footer } from './Footer';
 import { HostelSyncLogo } from './HostelSyncLogo';
 import { Hostel } from '@/lib/types';
 
 interface JoinCardProps {
-  userName: string;
-  onNameChange: (name: string) => void;
-  onRegenerate: () => void;
+  userName?: string;
+  onNameChange?: (name: string) => void;
+  onRegenerate?: () => void;
   findHostel: (code: string) => Hostel | null;
   onJoin: (code: string) => void;
   onOpenCreate: () => void;
@@ -19,9 +18,6 @@ interface JoinCardProps {
 }
 
 export function JoinCard({
-  userName,
-  onNameChange,
-  onRegenerate,
   findHostel,
   onJoin,
   onOpenCreate,
@@ -48,13 +44,6 @@ export function JoinCard({
         {/* Primary Code Input */}
         <div className="w-full">
           <CodeInput onJoin={onJoin} findHostel={findHostel} />
-
-          {/* Identity Line */}
-          <IdentitySelector
-            userName={userName}
-            onNameChange={onNameChange}
-            onRegenerate={onRegenerate}
-          />
 
           {/* Secondary Action: Create new hostel */}
           <div className="flex flex-col gap-3 mt-5">
