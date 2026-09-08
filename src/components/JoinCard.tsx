@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { PlusCircle } from 'lucide-react';
+import { PlusCircle, User } from 'lucide-react';
 import { CodeInput } from './CodeInput';
 import { Footer } from './Footer';
 import { HostelSyncLogo } from './HostelSyncLogo';
@@ -18,6 +18,8 @@ interface JoinCardProps {
 }
 
 export function JoinCard({
+  userName = '',
+  onNameChange,
   findHostel,
   onJoin,
   onOpenCreate,
@@ -45,8 +47,23 @@ export function JoinCard({
         <div className="w-full">
           <CodeInput onJoin={onJoin} findHostel={findHostel} />
 
+          {/* Your Name Input (No default name) */}
+          <div className="w-full mt-3.5">
+            <div className="flex items-center gap-2 bg-neutral-950/70 border border-neutral-800 focus-within:border-neutral-700 rounded-lg px-3 py-2 transition-colors">
+              <User className="w-3.5 h-3.5 text-neutral-500 shrink-0" />
+              <input
+                type="text"
+                placeholder="Your name (e.g. Alex)"
+                value={userName}
+                onChange={(e) => onNameChange?.(e.target.value)}
+                maxLength={20}
+                className="bg-transparent text-xs text-white placeholder:text-neutral-500 outline-none w-full font-medium"
+              />
+            </div>
+          </div>
+
           {/* Secondary Action: Create new hostel */}
-          <div className="flex flex-col gap-3 mt-5">
+          <div className="flex flex-col gap-3 mt-4">
             <button
               type="button"
               onClick={onOpenCreate}

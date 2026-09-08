@@ -32,6 +32,8 @@ import {
   Laptop,
   Lock,
   Shield,
+  Disc,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { Hostel } from '@/lib/types';
 import { HostelSyncLogo } from './HostelSyncLogo';
@@ -83,6 +85,7 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
   const [playbackPermission, setPlaybackPermission] = useState<'everyone' | 'admins'>('everyone');
   const [addMusicPermission, setAddMusicPermission] = useState<'everyone' | 'admins'>('everyone');
   const [adminPeerIds, setAdminPeerIds] = useState<string[]>([]);
+  const [mobileTab, setMobileTab] = useState<'music' | 'studio' | 'room'>('music');
 
   const effectiveUserName = userName?.trim() || 'Resident';
 
@@ -775,10 +778,52 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
         </div>
       </header>
 
+      {/* Mobile Navigation Tabs (visible only on mobile/tablet < lg) */}
+      <div className="lg:hidden flex items-center bg-neutral-900/95 border-b border-neutral-800 px-2 py-1.5 shrink-0 gap-1 select-none">
+        <button
+          type="button"
+          onClick={() => setMobileTab('music')}
+          className={`flex-1 py-1.5 px-2 rounded-md text-xs font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+            mobileTab === 'music'
+              ? 'bg-white text-black font-semibold shadow-xs'
+              : 'text-neutral-400 hover:text-white'
+          }`}
+        >
+          <Disc className="w-3.5 h-3.5" />
+          <span>Music</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setMobileTab('studio')}
+          className={`flex-1 py-1.5 px-2 rounded-md text-xs font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+            mobileTab === 'studio'
+              ? 'bg-white text-black font-semibold shadow-xs'
+              : 'text-neutral-400 hover:text-white'
+          }`}
+        >
+          <SlidersHorizontal className="w-3.5 h-3.5" />
+          <span>Studio</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setMobileTab('room')}
+          className={`flex-1 py-1.5 px-2 rounded-md text-xs font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+            mobileTab === 'room'
+              ? 'bg-white text-black font-semibold shadow-xs'
+              : 'text-neutral-400 hover:text-white'
+          }`}
+        >
+          <Users className="w-3.5 h-3.5" />
+          <span>Room ({connectedPeers.length + 1})</span>
+        </button>
+      </div>
+
       {/* 2. THREE-COLUMN MAIN BODY */}
       <div className="flex-1 flex overflow-hidden">
         {/* LEFT SIDEBAR (Room details, permissions, REAL connected users, upload audio button) */}
-        <aside className="w-64 sm:w-72 bg-[#0c0c0d] border-r border-neutral-800/80 flex flex-col justify-between p-3.5 shrink-0 overflow-y-auto">
+        <aside className={`w-full lg:w-72 bg-[#0c0c0d] lg:border-r border-neutral-800/80 flex-col justify-between p-3.5 shrink-0 overflow-y-auto ${
+          mobileTab === 'room' ? 'flex' : 'hidden lg:flex'
+        }`}>
           <div>
             {/* Room Header */}
             {/* Room Header with Room Name */}
@@ -901,8 +946,8 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
                   <div className="flex items-center gap-2">
                     <Headphones className="w-3.5 h-3.5 text-neutral-400" />
                     {isUserAdmin && <Crown className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />}
-                    <span className="text-xs font-medium text-white truncate max-w-[100px]">
-                      {effectiveUserName.toLowerCase().replace(/\s+/g, '-')}
+                    <span className="text-xs font-medium text-white truncate max-w-[120px]">
+                      {effectiveUserName}
                     </span>
                   </div>
                   <span className="bg-emerald-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
@@ -916,15 +961,15 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
                   return (
                     <div
                       key={peer.id}
-                      className="flex items-center justify-between px-2.5 py-1.5 text-xs text-neutral-400 bg-neutral-950/60 border border-neutral-850 rounded-lg group"
+                      className="flex items-center justify-between px-2.5 py-1.5 text-xs text-neutral-300 bg-neutral-950/60 border border-neutral-850 rounded-lg group"
                     >
                       <div className="flex items-center gap-2">
                         <Laptop className="w-3.5 h-3.5 text-cyan-400" />
                         {peerIsAdmin && (
                           <Crown className="w-3 h-3 text-amber-400 fill-amber-400" />
                         )}
-                        <span className="truncate max-w-[95px] text-neutral-200">
-                          {peer.name.toLowerCase()}
+                        <span className="truncate max-w-[120px] text-white font-medium">
+                          {peer.name}
                         </span>
                       </div>
 
@@ -997,7 +1042,9 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
         </aside>
 
         {/* CENTER COLUMN (Search prompt, Real track queue, real player) */}
-        <main className="flex-1 bg-[#09090a] flex flex-col overflow-y-auto">
+        <main className={`flex-1 bg-[#09090a] flex-col overflow-y-auto ${
+          mobileTab === 'music' ? 'flex' : 'hidden lg:flex'
+        }`}>
           {/* Top Search / Command Bar */}
           <div className="p-4 sm:p-6 pb-2">
             <div className="relative max-w-xl mx-auto">
@@ -1239,7 +1286,9 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
         </main>
 
         {/* RIGHT SIDEBAR (Real Live Chat & Spatial Audio) */}
-        <aside className="w-72 sm:w-80 bg-[#0c0c0d] border-l border-neutral-800/80 flex flex-col h-full min-h-0 shrink-0">
+        <aside className={`w-full lg:w-80 bg-[#0c0c0d] lg:border-l border-neutral-800/80 flex-col h-full min-h-0 shrink-0 ${
+          mobileTab === 'studio' ? 'flex' : 'hidden lg:flex'
+        }`}>
           {/* Top Tabs */}
           <div className="flex items-center p-2 border-b border-neutral-800/80 gap-1 text-xs shrink-0">
             <button
@@ -1357,8 +1406,8 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
         </div>
 
         <div className="flex items-center justify-between mt-1">
-          {/* Left: Offset latency, metronome & calibration */}
-          <div className="flex items-center gap-2.5 text-neutral-400 font-mono text-xs w-72 shrink-0">
+          {/* Left: Offset latency, metronome & calibration (hidden on narrow mobile) */}
+          <div className="hidden sm:flex items-center gap-2.5 text-neutral-400 font-mono text-xs w-72 shrink-0">
             {/* Metronome Toggle Button */}
             <button
               type="button"
