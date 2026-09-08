@@ -47,13 +47,25 @@ export type SyncEvent =
   | {
       type: 'ROOM_DELETED';
       roomCode: string;
+    }
+  | {
+      type: 'ROOM_STATE_SYNC';
+      tracks: any[];
+      currentTrackIndex: number;
+      isPlaying: boolean;
+      currentTime: number;
+      serverTimestamp: number;
+      playbackPermission: 'everyone' | 'admins';
+      addMusicPermission: 'everyone' | 'admins';
+      adminPeerIds: string[];
     };
 
 export class RoomSync {
   private channel: BroadcastChannel | null = null;
   private trysteroRoom: any = null;
   private sendWebRtcAction: ((data: any) => Promise<any>) | null = null;
-  private sendFileAction: ((data: any) => Promise<any>) | null = null;
+  private sendFileAction: ((data: any, options?: any) => Promise<any>) | null = null;
+  private activeStream: MediaStream | null = null;
   private roomCode: string;
   public peerId: string;
   public peerName: string;
@@ -97,11 +109,21 @@ export class RoomSync {
 
         // Binary audio file transfer action across devices
         const fileAction = room.makeAction<any>('file_sync');
-        this.sendFileAction = (data: any) => fileAction.send(data);
+        this.sendFileAction = (data: any, options?: any) => fileAction.send(data, options);
 
-        fileAction.onMessage = (data: any) => {
+        fileAction.onMessage = (data: any, metaObj: any) => {
           if (data && this.onFileCallback) {
-            this.onFileCallback(data as TrackFileData);
+            const meta = metaObj?.metadata || {};
+            this.onFileCallback({
+              buffer: data,
+              trackId: meta.trackId,
+              title: meta.title,
+              artist: meta.artist,
+              duration: meta.duration,
+              durationSeconds: meta.durationSeconds,
+              addedBy: meta.addedBy,
+              type: meta.type || 'audio/mpeg',
+            });
           }
         };
 
@@ -121,6 +143,15 @@ export class RoomSync {
             isHost: this.isHost,
             timestamp: performance.now(),
           });
+
+          // If we have an active audio stream, send it directly to the joining peer
+          if (this.activeStream && typeof room.addStream === 'function') {
+            try {
+              room.addStream(this.activeStream, { target: newPeerId });
+            } catch (e) {
+              console.warn('Error streaming audio to joining peer:', e);
+            }
+          }
         };
 
         room.onPeerLeave = (leftPeerId: string) => {
@@ -152,6 +183,7 @@ export class RoomSync {
   }
 
   public streamAudio(stream: MediaStream) {
+    this.activeStream = stream;
     if (this.trysteroRoom && typeof this.trysteroRoom.addStream === 'function') {
       try {
         this.trysteroRoom.addStream(stream);
@@ -162,10 +194,22 @@ export class RoomSync {
   }
 
   public broadcastFile(fileData: TrackFileData) {
-    if (this.sendFileAction) {
+    if (this.sendFileAction && fileData.buffer) {
       try {
-        this.sendFileAction(fileData).catch(() => {});
-      } catch {}
+        this.sendFileAction(fileData.buffer, {
+          metadata: {
+            trackId: fileData.trackId,
+            title: fileData.title,
+            artist: fileData.artist,
+            duration: fileData.duration,
+            durationSeconds: fileData.durationSeconds,
+            addedBy: fileData.addedBy,
+            type: fileData.type,
+          },
+        }).catch(() => {});
+      } catch (err) {
+        console.warn('broadcastFile error:', err);
+      }
     }
   }
 

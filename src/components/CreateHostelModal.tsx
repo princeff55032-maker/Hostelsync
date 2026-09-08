@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { X, Copy, Check, ArrowRight, Loader2 } from 'lucide-react';
 import { HostelSyncLogo } from './HostelSyncLogo';
 import { Hostel } from '@/lib/types';
+import { audioEngine } from '@/lib/audioEngine';
 
 interface CreateHostelModalProps {
   isOpen: boolean;
@@ -159,6 +160,7 @@ export function CreateHostelModal({
               <button
                 type="button"
                 onClick={() => {
+                  audioEngine.unlockAudio();
                   onEnterHostel(createdCode);
                   handleResetAndClose();
                 }}

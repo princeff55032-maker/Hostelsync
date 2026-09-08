@@ -3,6 +3,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { Loader2, ArrowRight, AlertCircle } from 'lucide-react';
 import { Hostel } from '@/lib/types';
+import { audioEngine } from '@/lib/audioEngine';
 
 interface CodeInputProps {
   onJoin: (code: string) => void;
@@ -78,6 +79,7 @@ export function CodeInput({ onJoin, findHostel }: CodeInputProps) {
     const code = suffix.length === 4 ? `HS-${suffix}` : (raw.startsWith('HS-') ? raw : `HS-${raw}`);
     if (suffix.length === 4 || code.startsWith('HS-')) {
       hiddenInputRef.current?.blur();
+      audioEngine.unlockAudio();
       onJoin(code);
     }
   };

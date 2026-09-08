@@ -28,6 +28,20 @@ class AudioEngine {
     return this.ctx;
   }
 
+  public unlockAudio(): void {
+    try {
+      const ctx = this.getContext();
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+      const buffer = ctx.createBuffer(1, 1, 22050);
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(ctx.destination);
+      source.start(0);
+    } catch {}
+  }
+
   // Ensure audio filters pipeline is built
   private ensurePipeline(): void {
     if (this.isPipelineActive) return;

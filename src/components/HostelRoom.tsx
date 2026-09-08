@@ -253,6 +253,18 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
 
   const activeTrack = tracks[currentTrackIndex] || null;
 
+  const tracksRef = useRef<RealTrack[]>(tracks);
+  const currentTrackIndexRef = useRef<number>(currentTrackIndex);
+  const currentTimeRef = useRef<number>(currentTime);
+  const isPlayingRef = useRef<boolean>(isPlaying);
+  const activeTrackRef = useRef<RealTrack | null>(activeTrack);
+
+  tracksRef.current = tracks;
+  currentTrackIndexRef.current = currentTrackIndex;
+  currentTimeRef.current = currentTime;
+  isPlayingRef.current = isPlaying;
+  activeTrackRef.current = activeTrack;
+
   // Initialize Real Synchronization Channel
   useEffect(() => {
     const sync = new RoomSync(hostel.code, effectiveUserName, true);
@@ -266,8 +278,11 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
     sync.onStream((incomingStream) => {
       if (remoteAudioRef.current) {
         remoteAudioRef.current.srcObject = incomingStream;
+        audioEngine.unlockAudio();
         audioEngine.resume();
-        remoteAudioRef.current.play().catch(() => {
+        remoteAudioRef.current.play().then(() => {
+          setHasAudioUnlocked(true);
+        }).catch(() => {
           setHasAudioUnlocked(false);
         });
       }
@@ -281,34 +296,55 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
 
         setTracks((prev) => {
           const exists = prev.find((t) => t.id === fileData.trackId);
+          let nextList: RealTrack[];
           if (exists) {
-            return prev.map((t) => (t.id === fileData.trackId ? { ...t, url: localBlobUrl } : t));
-          }
-          const receivedTrack: RealTrack = {
-            id: fileData.trackId,
-            title: fileData.title,
-            artist: fileData.artist,
-            duration: fileData.duration,
-            durationSeconds: fileData.durationSeconds,
-            addedBy: fileData.addedBy || 'Peer',
-            sourceType: 'device',
-            url: localBlobUrl,
-          };
-          const nextList = [...prev, receivedTrack];
-          if (prev.length === 0) {
-            setCurrentTrackIndex(0);
+            nextList = prev.map((t) => (t.id === fileData.trackId ? { ...t, url: localBlobUrl } : t));
+          } else {
+            const receivedTrack: RealTrack = {
+              id: fileData.trackId,
+              title: fileData.title,
+              artist: fileData.artist,
+              duration: fileData.duration,
+              durationSeconds: fileData.durationSeconds,
+              addedBy: fileData.addedBy || 'Peer',
+              sourceType: 'device',
+              url: localBlobUrl,
+            };
+            nextList = [...prev, receivedTrack];
           }
           return nextList;
         });
+
+        // If room is currently playing this track, start playback automatically
+        if (isPlayingRef.current) {
+          audioEngine.unlockAudio();
+          audioEngine.resume();
+          if (audioRef.current) {
+            audioRef.current.play().then(() => {
+              setHasAudioUnlocked(true);
+            }).catch(() => {
+              setHasAudioUnlocked(false);
+            });
+          }
+        }
       } catch (err) {
         console.warn('Error unpacking received audio file:', err);
       }
     });
 
-    // Clock calibration interval and stale peer cleanup with automatic admin succession
+    // Clock calibration interval, stale peer cleanup, and periodic playback time-lock
     const statsInterval = setInterval(() => {
       setLiveRtt(sync.measuredRtt);
       setLiveOffset(sync.measuredOffset);
+
+      // Periodic time lock sync: Admin broadcasts current time every 2s so peers never drift
+      if (isUserAdminRef.current && isPlayingRef.current) {
+        const currentLiveTime = audioRef.current?.currentTime ?? currentTimeRef.current;
+        sync.broadcast({
+          type: 'AUDIO_SEEK',
+          currentTime: currentLiveTime,
+        });
+      }
 
       // Clean up stale peers older than 5 seconds
       const now = performance.now();
@@ -343,6 +379,33 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
       sync.close();
     };
   }, [hostel.code, effectiveUserName]);
+
+  // Global user interaction listener: unlocks Web Audio permissions on first touch/click
+  useEffect(() => {
+    const handleInteraction = () => {
+      audioEngine.unlockAudio();
+      audioEngine.resume();
+      if (isPlayingRef.current) {
+        if (audioRef.current && audioRef.current.src) {
+          audioRef.current.play().catch(() => {});
+        }
+        if (remoteAudioRef.current && remoteAudioRef.current.srcObject) {
+          remoteAudioRef.current.play().catch(() => {});
+        }
+      }
+      setHasAudioUnlocked(true);
+    };
+
+    window.addEventListener('click', handleInteraction, { passive: true });
+    window.addEventListener('touchstart', handleInteraction, { passive: true });
+    window.addEventListener('keydown', handleInteraction, { passive: true });
+
+    return () => {
+      window.removeEventListener('click', handleInteraction);
+      window.removeEventListener('touchstart', handleInteraction);
+      window.removeEventListener('keydown', handleInteraction);
+    };
+  }, []);
 
   // Attach window refresh / pagehide event listeners to transfer admin or delete empty room instantly
   useEffect(() => {
@@ -397,6 +460,57 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
         onLeave();
         break;
       }
+      case 'ROOM_STATE_SYNC': {
+        setPlaybackPermission(event.playbackPermission);
+        setAddMusicPermission(event.addMusicPermission);
+        setAdminPeerIds(event.adminPeerIds || []);
+
+        if (Array.isArray(event.tracks) && event.tracks.length > 0) {
+          setTracks((prev) => {
+            return event.tracks.map((rt) => {
+              const localMatch = prev.find((p) => p.id === rt.id && p.url);
+              return localMatch ? { ...rt, url: localMatch.url, file: localMatch.file } : rt;
+            });
+          });
+        }
+
+        if (typeof event.currentTrackIndex === 'number') {
+          setCurrentTrackIndex(event.currentTrackIndex);
+        }
+
+        const networkDelay = event.serverTimestamp
+          ? Math.max(0, (performance.now() - event.serverTimestamp) / 1000)
+          : 0;
+        const targetTime = (event.currentTime || 0) + networkDelay;
+        setCurrentTime(targetTime);
+        setExternalSeekTime(targetTime);
+
+        if (event.isPlaying) {
+          setIsPlaying(true);
+          audioEngine.unlockAudio();
+          audioEngine.resume();
+          if (audioRef.current && audioRef.current.src) {
+            audioRef.current.currentTime = targetTime;
+            audioRef.current.play().then(() => {
+              setHasAudioUnlocked(true);
+            }).catch(() => {
+              setHasAudioUnlocked(false);
+            });
+          }
+          if (remoteAudioRef.current && remoteAudioRef.current.srcObject) {
+            remoteAudioRef.current.play().then(() => {
+              setHasAudioUnlocked(true);
+            }).catch(() => {
+              setHasAudioUnlocked(false);
+            });
+          }
+        } else {
+          setIsPlaying(false);
+          if (audioRef.current) audioRef.current.pause();
+          if (remoteAudioRef.current) remoteAudioRef.current.pause();
+        }
+        break;
+      }
       case 'PEER_PING': {
         setConnectedPeers((prev) => {
           const exists = prev.find((p) => p.id === event.peerId);
@@ -422,14 +536,37 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
           connectedPeersRef.current = nextList;
           return nextList;
         });
-        // If we are admin, announce room permissions to new peer
+
+        // If we are admin, announce full room state, queue, and current playing position to the new peer
         if (isUserAdmin && syncRef.current) {
           syncRef.current.broadcast({
-            type: 'PERMISSIONS_UPDATE',
-            playbackPermission,
-            addMusicPermission,
-            adminPeerIds,
+            type: 'ROOM_STATE_SYNC',
+            tracks: tracksRef.current.map((t) => ({ ...t, file: undefined })),
+            currentTrackIndex: currentTrackIndexRef.current,
+            isPlaying: isPlayingRef.current,
+            currentTime: audioRef.current?.currentTime ?? currentTimeRef.current,
+            serverTimestamp: performance.now(),
+            playbackPermission: playbackPermissionRef.current,
+            addMusicPermission: addMusicPermissionRef.current,
+            adminPeerIds: adminPeerIdsRef.current,
           });
+
+          // Also, if active track has a local file buffer, re-send it to new peer so they have the audio file
+          const curTrk = tracksRef.current[currentTrackIndexRef.current];
+          if (curTrk?.file && syncRef.current) {
+            curTrk.file.arrayBuffer().then((buf) => {
+              syncRef.current?.broadcastFile({
+                trackId: curTrk.id,
+                title: curTrk.title,
+                artist: curTrk.artist,
+                duration: curTrk.duration,
+                durationSeconds: curTrk.durationSeconds,
+                addedBy: curTrk.addedBy,
+                buffer: buf,
+                type: curTrk.file?.type || 'audio/mpeg',
+              });
+            }).catch(() => {});
+          }
         }
         break;
       }
@@ -469,43 +606,81 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
       case 'AUDIO_PLAY': {
         isSyncingFromRemote.current = true;
         setIsPlaying(true);
+        audioEngine.unlockAudio();
+        audioEngine.resume();
+
         if (event.trackId) {
           setTracks((prev) => {
             const idx = prev.findIndex((t) => t.id === event.trackId);
-            if (idx !== -1 && idx !== currentTrackIndex) {
+            if (idx !== -1 && idx !== currentTrackIndexRef.current) {
               setCurrentTrackIndex(idx);
             }
             return prev;
           });
         }
-        if (audioRef.current) {
-          if (Math.abs(audioRef.current.currentTime - event.currentTime) > 0.3) {
-            audioRef.current.currentTime = event.currentTime;
+
+        const networkDelay = event.serverTimestamp
+          ? Math.max(0, (performance.now() - event.serverTimestamp) / 1000)
+          : 0;
+        const targetTime = event.currentTime + networkDelay;
+
+        setCurrentTime(targetTime);
+        setExternalSeekTime(targetTime);
+
+        if (audioRef.current && audioRef.current.src) {
+          if (Math.abs(audioRef.current.currentTime - targetTime) > 0.25) {
+            audioRef.current.currentTime = targetTime;
           }
-          audioEngine.resume();
-          audioRef.current.play().catch(() => {
+          audioRef.current.play().then(() => {
+            setHasAudioUnlocked(true);
+          }).catch(() => {
             setHasAudioUnlocked(false);
           });
         }
-        setCurrentTime(event.currentTime);
+
+        if (remoteAudioRef.current && remoteAudioRef.current.srcObject) {
+          remoteAudioRef.current.play().then(() => {
+            setHasAudioUnlocked(true);
+          }).catch(() => {
+            setHasAudioUnlocked(false);
+          });
+        }
+
         setTimeout(() => {
           isSyncingFromRemote.current = false;
-        }, 100);
+        }, 120);
         break;
       }
       case 'AUDIO_PAUSE': {
         isSyncingFromRemote.current = true;
         setIsPlaying(false);
+        if (audioRef.current) {
+          audioRef.current.pause();
+        }
+        if (remoteAudioRef.current) {
+          remoteAudioRef.current.pause();
+        }
+        if (typeof event.currentTime === 'number') {
+          setCurrentTime(event.currentTime);
+          setExternalSeekTime(event.currentTime);
+        }
         setTimeout(() => {
           isSyncingFromRemote.current = false;
         }, 100);
         break;
       }
       case 'AUDIO_SEEK': {
-        if (audioRef.current) {
-          audioRef.current.currentTime = event.currentTime;
+        if (!isUserAdminRef.current) {
+          const currentLocalTime = audioRef.current?.currentTime ?? currentTimeRef.current;
+          const drift = Math.abs(currentLocalTime - event.currentTime);
+          if (drift > 0.35) {
+            if (audioRef.current && activeTrackRef.current?.sourceType !== 'youtube') {
+              audioRef.current.currentTime = event.currentTime;
+            }
+            setExternalSeekTime(event.currentTime);
+          }
+          setCurrentTime(event.currentTime);
         }
-        setCurrentTime(event.currentTime);
         break;
       }
       case 'QUEUE_ADD': {
@@ -588,6 +763,9 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
     if (audioRef.current) {
       audioRef.current.volume = isMuted ? 0 : volume / 100;
     }
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.volume = isMuted ? 0 : volume / 100;
+    }
   }, [volume, isMuted]);
 
   // Sync play/pause with real HTML5 audio
@@ -597,13 +775,29 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
 
     if (isPlaying) {
       audioEngine.resume();
+      if (currentTimeRef.current > 0 && Math.abs(audio.currentTime - currentTimeRef.current) > 0.5) {
+        audio.currentTime = currentTimeRef.current;
+      }
       audio.play().catch(() => {
-        // Handle browser autoplay policy
+        // Handled by unlock overlay / user interaction
       });
     } else {
       audio.pause();
     }
   }, [isPlaying, activeTrack]);
+
+  // Sync play/pause with remote live WebRTC stream
+  useEffect(() => {
+    const remoteAudio = remoteAudioRef.current;
+    if (!remoteAudio || !remoteAudio.srcObject) return;
+
+    if (isPlaying) {
+      audioEngine.resume();
+      remoteAudio.play().catch(() => {});
+    } else {
+      remoteAudio.pause();
+    }
+  }, [isPlaying]);
 
   const toggleMetronome = () => {
     const next = audioEngine.toggleMetronome((beat) => {
@@ -660,9 +854,15 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
           syncRef.current.streamAudio(liveStream);
         }
       }
+      if (remoteAudioRef.current && remoteAudioRef.current.srcObject) {
+        remoteAudioRef.current.play().catch(() => {});
+      }
     } else {
       if (audioRef.current && activeTrack?.sourceType !== 'youtube') {
         audioRef.current.pause();
+      }
+      if (remoteAudioRef.current) {
+        remoteAudioRef.current.pause();
       }
     }
 
@@ -701,6 +901,16 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
     setCurrentTime(0);
     setExternalSeekTime(0);
     setIsPlaying(true);
+
+    if (syncRef.current && !isSyncingFromRemote.current) {
+      const nextTrk = tracks[nextIdx];
+      syncRef.current.broadcast({
+        type: 'AUDIO_PLAY',
+        trackId: nextTrk?.id || '',
+        currentTime: 0,
+        serverTimestamp: performance.now(),
+      });
+    }
   };
 
   const handlePrevTrack = () => {
@@ -710,6 +920,12 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
       if (audioRef.current && activeTrack?.sourceType !== 'youtube') audioRef.current.currentTime = 0;
       setExternalSeekTime(0);
       setCurrentTime(0);
+      if (syncRef.current && !isSyncingFromRemote.current) {
+        syncRef.current.broadcast({
+          type: 'AUDIO_SEEK',
+          currentTime: 0,
+        });
+      }
       return;
     }
     const prevIdx = (currentTrackIndex - 1 + tracks.length) % tracks.length;
@@ -717,6 +933,16 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
     setCurrentTime(0);
     setExternalSeekTime(0);
     setIsPlaying(true);
+
+    if (syncRef.current && !isSyncingFromRemote.current) {
+      const prevTrk = tracks[prevIdx];
+      syncRef.current.broadcast({
+        type: 'AUDIO_PLAY',
+        trackId: prevTrk?.id || '',
+        currentTime: 0,
+        serverTimestamp: performance.now(),
+      });
+    }
   };
 
   // Real scrub / seek on timeline (Works seamlessly with both native audio and YouTube)
@@ -780,6 +1006,15 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
           file: undefined, // strip raw File object for JSON broadcast
         },
       });
+
+      if (tracks.length === 0) {
+        syncRef.current.broadcast({
+          type: 'AUDIO_PLAY',
+          trackId: newTrk.id,
+          currentTime: 0,
+          serverTimestamp: performance.now(),
+        });
+      }
 
       // Broadcast raw audio file buffer over WebRTC DataChannel to all devices
       if (data.file) {
@@ -929,6 +1164,15 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
           type: 'QUEUE_ADD',
           track: newTrk,
         });
+
+        if (tracks.length === 0) {
+          syncRef.current.broadcast({
+            type: 'AUDIO_PLAY',
+            trackId: newTrk.id,
+            currentTime: 0,
+            serverTimestamp: performance.now(),
+          });
+        }
 
         const chatNotification: ChatMessage = {
           id: `msg-add-${Date.now()}`,
