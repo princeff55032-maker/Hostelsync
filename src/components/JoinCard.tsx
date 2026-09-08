@@ -26,7 +26,7 @@ export function JoinCard({
   onOpenAbout,
 }: JoinCardProps) {
   return (
-    <div className="w-full px-2.5 sm:px-1 max-w-[28rem] mx-auto mt-20 sm:mt-24 lg:mt-28 animate-in fade-in duration-200">
+    <div className="w-full px-3 sm:px-1 max-w-[28rem] mx-auto mt-6 sm:mt-16 lg:mt-24 animate-in fade-in duration-200">
       <div className="flex flex-col items-center justify-center p-6 sm:p-7 bg-neutral-900 rounded-xl border border-neutral-800 shadow-2xl mx-auto">
         {/* Brand Logo */}
         <div className="mb-4">

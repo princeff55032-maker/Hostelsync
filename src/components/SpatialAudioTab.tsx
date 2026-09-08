@@ -304,7 +304,7 @@ export function SpatialAudioTab({
   }, [isRotating]);
 
   return (
-    <div className="p-4 flex flex-col space-y-4 text-xs select-none pb-10">
+    <div className="p-4 flex flex-col space-y-4 text-xs select-none pb-28 lg:pb-10">
       {/* 1. Spatial Audio Header & Switch */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">

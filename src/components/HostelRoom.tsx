@@ -49,6 +49,7 @@ interface HostelRoomProps {
   hostel: Hostel;
   userName: string;
   onLeave: () => void;
+  onDeleteRoom?: () => void;
   onAddAnnouncement?: (title: string, content: string, tag: any) => void;
   onAddComplaint?: (title: string, category: any, room: string) => void;
 }
@@ -74,7 +75,7 @@ interface ChatMessage {
   isSelf: boolean;
 }
 
-export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
+export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRoomProps) {
   // Audio & Sync References
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -87,6 +88,7 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
   const [playbackPermission, setPlaybackPermission] = useState<'everyone' | 'admins'>('everyone');
   const [addMusicPermission, setAddMusicPermission] = useState<'everyone' | 'admins'>('everyone');
   const [adminPeerIds, setAdminPeerIds] = useState<string[]>([]);
+  const [promotedToAdmin, setPromotedToAdmin] = useState<boolean>(false);
   const [mobileTab, setMobileTab] = useState<'music' | 'studio' | 'room'>('music');
 
   const effectiveUserName = userName?.trim() || 'Resident';
@@ -94,12 +96,25 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
   // Room host & Admin detection
   const isRoomHost =
     Boolean(hostel.warden && effectiveUserName && hostel.warden.toLowerCase() === effectiveUserName.toLowerCase()) ||
-    syncRef.current?.isHost === true;
+    syncRef.current?.isHost === true ||
+    promotedToAdmin;
 
   const isUserAdmin =
     isRoomHost ||
     adminPeerIds.includes(syncRef.current?.peerId || '') ||
     adminPeerIds.includes(effectiveUserName.toLowerCase());
+
+  // References for unload & refresh listeners
+  const connectedPeersRef = useRef<Peer[]>([]);
+  const isUserAdminRef = useRef<boolean>(false);
+  const playbackPermissionRef = useRef<'everyone' | 'admins'>(playbackPermission);
+  const addMusicPermissionRef = useRef<'everyone' | 'admins'>(addMusicPermission);
+  const adminPeerIdsRef = useRef<string[]>(adminPeerIds);
+
+  isUserAdminRef.current = isUserAdmin;
+  playbackPermissionRef.current = playbackPermission;
+  addMusicPermissionRef.current = addMusicPermission;
+  adminPeerIdsRef.current = adminPeerIds;
 
   const canControlPlayback = playbackPermission === 'everyone' || isUserAdmin;
   const canAddMusic = addMusicPermission === 'everyone' || isUserAdmin;
@@ -139,6 +154,57 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
     setAdminPeerIds(nextAdmins);
     broadcastPermissions(playbackPermission, addMusicPermission, nextAdmins);
   };
+
+  // Instant Admin Transfer / Instant Room Deletion on Browser Refresh or Leave
+  const handleLeaveOrRefresh = useCallback(() => {
+    const peers = connectedPeersRef.current;
+    const amAdmin = isUserAdminRef.current;
+
+    if (amAdmin) {
+      if (peers.length > 0) {
+        // Members are present: transfer admin instantly to the next member in the room
+        const nextAdmin = peers[0];
+        if (syncRef.current) {
+          syncRef.current.broadcast({
+            type: 'ADMIN_TRANSFER',
+            newAdminPeerId: nextAdmin.id,
+            newAdminName: nextAdmin.name,
+          });
+          syncRef.current.broadcast({
+            type: 'PERMISSIONS_UPDATE',
+            playbackPermission: playbackPermissionRef.current,
+            addMusicPermission: addMusicPermissionRef.current,
+            adminPeerIds: [nextAdmin.id, nextAdmin.name.toLowerCase()],
+          });
+          syncRef.current.broadcast({
+            type: 'PEER_LEAVE',
+            peerId: syncRef.current.peerId,
+          });
+        }
+      } else {
+        // No members present: delete room instantly
+        if (syncRef.current) {
+          syncRef.current.broadcast({
+            type: 'ROOM_DELETED',
+            roomCode: hostel.code,
+          });
+        }
+        onDeleteRoom?.();
+      }
+    } else {
+      if (syncRef.current) {
+        syncRef.current.broadcast({
+          type: 'PEER_LEAVE',
+          peerId: syncRef.current.peerId,
+        });
+      }
+    }
+
+    // Always clear active session so refresh lands back on the clean home screen
+    try {
+      localStorage.removeItem('hostelsync_active_code_v1');
+    } catch {}
+  }, [hostel.code, onDeleteRoom]);
 
   const [rightTab, setRightTab] = useState<'chat' | 'spatial'>('chat');
   const [showQrModal, setShowQrModal] = useState(false);
@@ -239,14 +305,37 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
       }
     });
 
-    // Clock calibration interval
+    // Clock calibration interval and stale peer cleanup with automatic admin succession
     const statsInterval = setInterval(() => {
       setLiveRtt(sync.measuredRtt);
       setLiveOffset(sync.measuredOffset);
 
-      // Clean up stale peers older than 6 seconds
+      // Clean up stale peers older than 5 seconds
       const now = performance.now();
-      setConnectedPeers((prev) => prev.filter((p) => now - p.lastSeen < 6000));
+      setConnectedPeers((prev) => {
+        const alive = prev.filter((p) => now - p.lastSeen < 5000);
+        connectedPeersRef.current = alive;
+
+        // If previous admin disconnected and we are not admin yet, automatically promote self
+        if (!isUserAdminRef.current && alive.length > 0) {
+          const hasAliveAdmin = alive.some((p) => adminPeerIdsRef.current.includes(p.id) || p.isHost);
+          if (!hasAliveAdmin) {
+            setPromotedToAdmin(true);
+            setAdminPeerIds((curr) => [...curr, sync.peerId, effectiveUserName.toLowerCase()]);
+            setMessages((msgs) => [
+              ...msgs,
+              {
+                id: `msg-succ-${Date.now()}`,
+                sender: 'HostelSync',
+                text: '👑 Previous host disconnected. You are now the Admin of this room!',
+                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                isSelf: false,
+              },
+            ]);
+          }
+        }
+        return alive;
+      });
     }, 1000);
 
     return () => {
@@ -255,29 +344,83 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
     };
   }, [hostel.code, effectiveUserName]);
 
+  // Attach window refresh / pagehide event listeners to transfer admin or delete empty room instantly
+  useEffect(() => {
+    const onBeforeUnload = () => {
+      handleLeaveOrRefresh();
+    };
+    const onPageHide = () => {
+      handleLeaveOrRefresh();
+    };
+
+    window.addEventListener('beforeunload', onBeforeUnload);
+    window.addEventListener('pagehide', onPageHide);
+
+    return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      window.removeEventListener('pagehide', onPageHide);
+    };
+  }, [handleLeaveOrRefresh]);
+
   // Handle incoming real-time events from other tabs / devices
   const handleRemoteSyncEvent = (event: SyncEvent) => {
     switch (event.type) {
+      case 'ADMIN_TRANSFER': {
+        const myId = syncRef.current?.peerId;
+        const myName = effectiveUserName.toLowerCase();
+        const isMe = event.newAdminPeerId === myId || event.newAdminName.toLowerCase() === myName;
+
+        if (isMe) {
+          setPromotedToAdmin(true);
+        }
+        setAdminPeerIds((prev) => {
+          const updated = [...prev, event.newAdminPeerId, event.newAdminName.toLowerCase()];
+          return Array.from(new Set(updated));
+        });
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `msg-adm-${Date.now()}`,
+            sender: 'HostelSync',
+            text: isMe
+              ? '👑 You are now the Admin of this room!'
+              : `👑 Admin role transferred to ${event.newAdminName}`,
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            isSelf: false,
+          },
+        ]);
+        break;
+      }
+      case 'ROOM_DELETED': {
+        onDeleteRoom?.();
+        onLeave();
+        break;
+      }
       case 'PEER_PING': {
         setConnectedPeers((prev) => {
           const exists = prev.find((p) => p.id === event.peerId);
+          let nextList: Peer[];
           if (exists) {
-            return prev.map((p) =>
+            nextList = prev.map((p) =>
               p.id === event.peerId
                 ? { ...p, name: event.name, lastSeen: performance.now() }
                 : p
             );
+          } else {
+            nextList = [
+              ...prev,
+              {
+                id: event.peerId,
+                name: event.name,
+                isHost: event.isHost,
+                lastSeen: performance.now(),
+                deviceType: 'Desktop Browser',
+              },
+            ];
           }
-          return [
-            ...prev,
-            {
-              id: event.peerId,
-              name: event.name,
-              isHost: event.isHost,
-              lastSeen: performance.now(),
-              deviceType: 'Desktop Browser',
-            },
-          ];
+          connectedPeersRef.current = nextList;
+          return nextList;
         });
         // If we are admin, announce room permissions to new peer
         if (isUserAdmin && syncRef.current) {
@@ -297,7 +440,30 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
         break;
       }
       case 'PEER_LEAVE': {
-        setConnectedPeers((prev) => prev.filter((p) => p.id !== event.peerId));
+        setConnectedPeers((prev) => {
+          const remaining = prev.filter((p) => p.id !== event.peerId);
+          connectedPeersRef.current = remaining;
+
+          // If departing peer was an admin, automatically transfer admin to first remaining peer
+          if (!isUserAdminRef.current) {
+            const hasAliveAdmin = remaining.some((p) => adminPeerIdsRef.current.includes(p.id) || p.isHost);
+            if (!hasAliveAdmin) {
+              setPromotedToAdmin(true);
+              setAdminPeerIds((curr) => [...curr, syncRef.current?.peerId || '', effectiveUserName.toLowerCase()]);
+              setMessages((msgs) => [
+                ...msgs,
+                {
+                  id: `msg-succ-${Date.now()}`,
+                  sender: 'HostelSync',
+                  text: '👑 Previous host left. You are now the Admin of this room!',
+                  time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                  isSelf: false,
+                },
+              ]);
+            }
+          }
+          return remaining;
+        });
         break;
       }
       case 'AUDIO_PLAY': {
@@ -784,38 +950,39 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
   const totalConnectedCount = 1 + connectedPeers.length;
 
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#0a0a0b] text-[#ededed] select-none font-sans">
+    <div className="flex flex-col h-[100dvh] w-screen overflow-hidden bg-[#0a0a0b] text-[#ededed] select-none font-sans">
       {/* Real HTML5 Audio Element for local and streaming audio */}
       {activeTrack?.url && activeTrack.sourceType !== 'youtube' && (
         <audio ref={audioRef} src={activeTrack.url} />
       )}
 
-      {/* 1. TOP STATUS BAR (Exact BeatSync layout with 100% REAL telemetry) */}
-      <header className="h-9 px-3.5 bg-[#0d0d0e] border-b border-neutral-800/80 flex items-center justify-between text-[11px] text-neutral-400 shrink-0">
-        {/* Left: Brand + Real Status + Room + Real Connected Count */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 text-white font-medium">
+      {/* 1. TOP STATUS BAR (Clean, modern, and uncluttered on mobile) */}
+      <header className="h-10 px-3 sm:px-3.5 bg-[#0d0d0e] border-b border-neutral-800/80 flex items-center justify-between text-[11px] text-neutral-400 shrink-0">
+        {/* Left: Brand + Room Name + Live Indicator */}
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <div className="flex items-center gap-1.5 text-white font-medium shrink-0">
             <HostelSyncLogo size="sm" />
           </div>
 
-          <div className="flex items-center gap-1.5 text-emerald-400 font-mono text-[10px]">
+          <div className="flex items-center gap-1.5 text-emerald-400 font-mono text-[10px] shrink-0">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>LIVE SYNC</span>
+            <span className="hidden xs:inline">LIVE SYNC</span>
           </div>
 
-          <div className="flex items-center gap-1.5 font-medium text-white truncate max-w-[150px] sm:max-w-xs">
-            <span className="truncate">{hostel.name}</span>
+          <div className="flex items-center gap-1.5 font-medium text-white min-w-0">
+            <span className="truncate max-w-[100px] xs:max-w-[140px] sm:max-w-xs">{hostel.name}</span>
             <span className="font-mono text-neutral-400 text-[10px] shrink-0">
               #{hostel.code.replace('HS-', '')}
             </span>
           </div>
 
-          <div className="flex items-center gap-1 text-neutral-400">
+          <div className="flex items-center gap-1 text-neutral-400 shrink-0">
             <Users className="w-3 h-3" />
-            <span>{totalConnectedCount} {totalConnectedCount === 1 ? 'device' : 'devices'}</span>
+            <span className="hidden xs:inline">{totalConnectedCount} {totalConnectedCount === 1 ? 'device' : 'devices'}</span>
+            <span className="xs:hidden">{totalConnectedCount}</span>
           </div>
 
-          <span className="text-neutral-700">|</span>
+          <span className="hidden md:inline text-neutral-700">|</span>
 
           {/* Real latency & offset measured from Web Performance clock */}
           <div className="hidden md:flex items-center gap-2 font-mono text-[10px] text-neutral-500">
@@ -826,12 +993,12 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
         </div>
 
         {/* Right: Social & Leave */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
           <a
             href="https://discord.gg"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-neutral-500 hover:text-white transition-colors"
+            className="hidden sm:block text-neutral-500 hover:text-white transition-colors"
             title="Community"
           >
             <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
@@ -843,7 +1010,7 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
             href="https://github.com"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-neutral-500 hover:text-white transition-colors"
+            className="hidden sm:block text-neutral-500 hover:text-white transition-colors"
             title="GitHub"
           >
             <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
@@ -857,8 +1024,11 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
 
           <button
             type="button"
-            onClick={onLeave}
-            className="flex items-center gap-1 text-[11px] text-neutral-400 hover:text-white px-2 py-0.5 rounded hover:bg-neutral-800 transition-colors ml-1 cursor-pointer"
+            onClick={() => {
+              handleLeaveOrRefresh();
+              onLeave();
+            }}
+            className="flex items-center gap-1 text-[11px] text-neutral-400 hover:text-white px-2 py-0.5 rounded hover:bg-neutral-800 transition-colors cursor-pointer"
             title="Leave Room"
           >
             <LogOut className="w-3 h-3" />
@@ -901,49 +1071,49 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
       />
 
       {/* Mobile Navigation Tabs (visible only on mobile/tablet < lg) */}
-      <div className="lg:hidden flex items-center bg-neutral-900/95 border-b border-neutral-800 px-2 py-1.5 shrink-0 gap-1 select-none">
+      <div className="lg:hidden grid grid-cols-3 gap-1 bg-[#101012] border-b border-neutral-800/80 px-2 py-1.5 shrink-0 select-none">
         <button
           type="button"
           onClick={() => setMobileTab('music')}
-          className={`flex-1 py-1.5 px-2 rounded-md text-xs font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+          className={`py-2 px-1 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
             mobileTab === 'music'
               ? 'bg-white text-black font-semibold shadow-xs'
-              : 'text-neutral-400 hover:text-white'
+              : 'text-neutral-400 hover:text-white hover:bg-neutral-800/50'
           }`}
         >
-          <Disc className="w-3.5 h-3.5" />
-          <span>Music</span>
+          <Disc className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">Music</span>
         </button>
         <button
           type="button"
           onClick={() => setMobileTab('studio')}
-          className={`flex-1 py-1.5 px-2 rounded-md text-xs font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+          className={`py-2 px-1 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
             mobileTab === 'studio'
               ? 'bg-white text-black font-semibold shadow-xs'
-              : 'text-neutral-400 hover:text-white'
+              : 'text-neutral-400 hover:text-white hover:bg-neutral-800/50'
           }`}
         >
-          <SlidersHorizontal className="w-3.5 h-3.5" />
-          <span>Studio</span>
+          <SlidersHorizontal className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">Studio</span>
         </button>
         <button
           type="button"
           onClick={() => setMobileTab('room')}
-          className={`flex-1 py-1.5 px-2 rounded-md text-xs font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+          className={`py-2 px-1 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
             mobileTab === 'room'
               ? 'bg-white text-black font-semibold shadow-xs'
-              : 'text-neutral-400 hover:text-white'
+              : 'text-neutral-400 hover:text-white hover:bg-neutral-800/50'
           }`}
         >
-          <Users className="w-3.5 h-3.5" />
-          <span>Room ({connectedPeers.length + 1})</span>
+          <Users className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">Room ({totalConnectedCount})</span>
         </button>
       </div>
 
       {/* 2. THREE-COLUMN MAIN BODY */}
       <div className="flex-1 flex overflow-hidden">
         {/* LEFT SIDEBAR (Room details, permissions, REAL connected users, upload audio button) */}
-        <aside className={`w-full lg:w-72 bg-[#0c0c0d] lg:border-r border-neutral-800/80 flex-col justify-between p-3.5 shrink-0 overflow-y-auto ${
+        <aside className={`w-full lg:w-72 bg-[#0c0c0d] lg:border-r border-neutral-800/80 flex-col justify-between p-3.5 pb-28 lg:pb-3.5 shrink-0 overflow-y-auto ${
           mobileTab === 'room' ? 'flex' : 'hidden lg:flex'
         }`}>
           <div>
@@ -1168,7 +1338,7 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
           mobileTab === 'music' ? 'flex' : 'hidden lg:flex'
         }`}>
           {/* Top Search / Command Bar */}
-          <div className="p-4 sm:p-6 pb-2">
+          <div className="p-3 sm:p-6 pb-2">
             <div className="relative max-w-xl mx-auto">
               <Search className="w-4 h-4 text-neutral-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
@@ -1179,14 +1349,14 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
                 onKeyDown={handleSearchKeyDown}
                 placeholder={
                   canAddMusic
-                    ? "What do you want to play? (Search or paste YouTube/MP3 link & press Enter)"
+                    ? "Search or paste YouTube / MP3 link..."
                     : "Adding music is restricted to Admins"
                 }
-                className={`w-full bg-neutral-900/90 border border-neutral-800 rounded-lg pl-10 pr-10 py-2 text-xs text-white placeholder:text-neutral-500 outline-none transition-colors ${
+                className={`w-full bg-neutral-900/90 border border-neutral-800 rounded-lg pl-9 sm:pl-10 pr-4 sm:pr-10 py-2 text-xs text-white placeholder:text-neutral-500 outline-none transition-colors ${
                   canAddMusic ? 'focus:border-neutral-700' : 'opacity-60 cursor-not-allowed'
                 }`}
               />
-              <span className="absolute right-3 top-1/2 -translate-y-1/2 font-mono text-[10px] text-neutral-500 bg-neutral-800 px-1.5 py-0.5 rounded border border-neutral-700">
+              <span className="hidden sm:inline-block absolute right-3 top-1/2 -translate-y-1/2 font-mono text-[10px] text-neutral-500 bg-neutral-800 px-1.5 py-0.5 rounded border border-neutral-700">
                 ⌘K
               </span>
             </div>
@@ -1274,7 +1444,7 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
           )}
 
           {/* Main Queue / Empty State */}
-          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+          <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-6 pb-28 lg:pb-8 text-center">
             {tracks.length === 0 ? (
               <div className="flex flex-col items-center animate-in fade-in duration-200">
                 <p className="text-xs text-neutral-400 mb-4 font-medium">No tracks yet</p>
@@ -1504,7 +1674,7 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
       </div>
 
       {/* 3. BOTTOM AUDIO PLAYER BAR (Real seekable audio timeline, real playback) */}
-      <footer className="h-16 px-4 bg-[#0a0a0b] border-t border-neutral-800/80 flex flex-col justify-center shrink-0 text-xs select-none relative">
+      <footer className="h-16 px-3 sm:px-4 bg-[#0a0a0b] border-t border-neutral-800/80 flex flex-col justify-center shrink-0 text-xs select-none relative">
         {/* Seekable Progress Bar across top of player */}
         <div
           onClick={canControlPlayback ? handleSeek : undefined}
@@ -1527,71 +1697,91 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
           </div>
         </div>
 
-        <div className="flex items-center justify-between mt-1">
-          {/* Left: Offset latency, metronome & calibration (hidden on narrow mobile) */}
-          <div className="hidden sm:flex items-center gap-2.5 text-neutral-400 font-mono text-xs w-72 shrink-0">
-            {/* Metronome Toggle Button */}
-            <button
-              type="button"
-              onClick={toggleMetronome}
-              className={`w-6 h-6 rounded-full flex items-center justify-center transition-all cursor-pointer border shrink-0 ${
-                isMetronomeActive
-                  ? 'bg-emerald-500 text-black border-emerald-400 shadow-sm shadow-emerald-500/30'
-                  : 'bg-neutral-900 text-neutral-300 border-neutral-800 hover:text-white hover:bg-neutral-800'
-              }`}
-              title={isMetronomeActive ? 'Stop Metronome Sync' : 'Start Metronome Sync'}
-            >
-              <span className={`text-[10px] font-bold ${isMetronomeActive ? 'animate-pulse' : ''}`}>
-                M
-              </span>
-            </button>
+        <div className="flex items-center justify-between mt-1 gap-2">
+          {/* Left section:
+              - On Desktop: Metronome + Offset Latency + RTT
+              - On Mobile: Current playing track info */}
+          <div className="flex items-center min-w-0 sm:w-72 shrink-0">
+            {/* Desktop metronome & telemetry */}
+            <div className="hidden sm:flex items-center gap-2.5 text-neutral-400 font-mono text-xs">
+              <button
+                type="button"
+                onClick={toggleMetronome}
+                className={`w-6 h-6 rounded-full flex items-center justify-center transition-all cursor-pointer border shrink-0 ${
+                  isMetronomeActive
+                    ? 'bg-emerald-500 text-black border-emerald-400 shadow-sm shadow-emerald-500/30'
+                    : 'bg-neutral-900 text-neutral-300 border-neutral-800 hover:text-white hover:bg-neutral-800'
+                }`}
+                title={isMetronomeActive ? 'Stop Metronome Sync' : 'Start Metronome Sync'}
+              >
+                <span className={`text-[10px] font-bold ${isMetronomeActive ? 'animate-pulse' : ''}`}>
+                  M
+                </span>
+              </button>
 
-            {/* Offset Latency Adjuster */}
-            <div className="flex items-center gap-1 shrink-0">
-              <button
-                type="button"
-                onClick={() => setLiveOffset((o) => o - 5)}
-                className="hover:text-white px-1 py-0.5 text-neutral-500 hover:bg-neutral-800 rounded transition-colors cursor-pointer text-xs font-bold leading-none"
-                title="-5ms delay"
-              >
-                «
-              </button>
-              <span className="text-[11px] text-neutral-300 w-11 text-center font-mono">
-                {liveOffset >= 0 ? `+${liveOffset.toFixed(0)}ms` : `${liveOffset.toFixed(0)}ms`}
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setLiveOffset((o) => o - 5)}
+                  className="hover:text-white px-1 py-0.5 text-neutral-500 hover:bg-neutral-800 rounded transition-colors cursor-pointer text-xs font-bold leading-none"
+                  title="-5ms delay"
+                >
+                  «
+                </button>
+                <span className="text-[11px] text-neutral-300 w-11 text-center font-mono">
+                  {liveOffset >= 0 ? `+${liveOffset.toFixed(0)}ms` : `${liveOffset.toFixed(0)}ms`}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setLiveOffset((o) => o + 5)}
+                  className="hover:text-white px-1 py-0.5 text-neutral-500 hover:bg-neutral-800 rounded transition-colors cursor-pointer text-xs font-bold leading-none"
+                  title="+5ms delay"
+                >
+                  »
+                </button>
+              </div>
+
+              <span className="px-1.5 py-0.5 bg-neutral-900 border border-neutral-800 rounded text-[10px] text-neutral-400 font-mono shrink-0">
+                {liveRtt.toFixed(1)}ms
               </span>
-              <button
-                type="button"
-                onClick={() => setLiveOffset((o) => o + 5)}
-                className="hover:text-white px-1 py-0.5 text-neutral-500 hover:bg-neutral-800 rounded transition-colors cursor-pointer text-xs font-bold leading-none"
-                title="+5ms delay"
+
+              <span
+                onClick={toggleMetronome}
+                className={`text-[10px] cursor-pointer transition-colors select-none shrink-0 ${
+                  isMetronomeActive ? 'text-emerald-400 font-semibold' : 'text-neutral-500 hover:text-neutral-400'
+                }`}
               >
-                »
-              </button>
+                metronome
+              </span>
             </div>
 
-            {/* RTT Badge */}
-            <span className="px-1.5 py-0.5 bg-neutral-900 border border-neutral-800 rounded text-[10px] text-neutral-400 font-mono shrink-0">
-              {liveRtt.toFixed(1)}ms
-            </span>
-
-            {/* Metronome Label */}
-            <span
-              onClick={toggleMetronome}
-              className={`text-[10px] cursor-pointer transition-colors select-none shrink-0 ${
-                isMetronomeActive ? 'text-emerald-400 font-semibold' : 'text-neutral-500 hover:text-neutral-400'
-              }`}
-            >
-              metronome
-            </span>
+            {/* Mobile now playing info */}
+            <div className="flex sm:hidden items-center gap-2 min-w-0 max-w-[130px]">
+              <div className="w-8 h-8 rounded-lg bg-neutral-900 border border-neutral-800 flex items-center justify-center shrink-0">
+                {isPlaying ? (
+                  <Radio className="w-4 h-4 text-emerald-400 animate-pulse" />
+                ) : (
+                  <Music className="w-4 h-4 text-neutral-500" />
+                )}
+              </div>
+              <div className="min-w-0 truncate">
+                <div className="text-[11px] font-semibold text-white truncate">
+                  {activeTrack?.title || 'No track'}
+                </div>
+                <div className="text-[9px] text-neutral-400 truncate">
+                  {activeTrack?.artist || 'HostelSync'}
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Center: Playback Controls */}
-          <div className="flex flex-col items-center gap-0.5">
-            <div className="flex items-center gap-4">
+          <div className="flex flex-col items-center gap-0.5 shrink-0">
+            <div className="flex items-center gap-2.5 sm:gap-4">
               <button
                 type="button"
                 onClick={() => setIsShuffle(!isShuffle)}
-                className={`transition-colors cursor-pointer ${
+                className={`hidden xs:block transition-colors cursor-pointer ${
                   isShuffle ? 'text-emerald-400' : 'text-neutral-500 hover:text-neutral-300'
                 }`}
                 title="Shuffle"
@@ -1603,7 +1793,7 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
                 type="button"
                 onClick={handlePrevTrack}
                 disabled={!canControlPlayback}
-                className={`transition-colors ${
+                className={`transition-colors p-1 ${
                   canControlPlayback
                     ? 'text-neutral-400 hover:text-white cursor-pointer'
                     : 'text-neutral-600 cursor-not-allowed opacity-50'
@@ -1618,7 +1808,7 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
                 type="button"
                 onClick={togglePlay}
                 disabled={!canControlPlayback}
-                className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shadow-xs active:scale-95 ${
+                className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center transition-all shadow-xs active:scale-95 ${
                   canControlPlayback
                     ? 'bg-white text-black hover:bg-neutral-200 cursor-pointer'
                     : 'bg-neutral-800 text-neutral-500 cursor-not-allowed opacity-50'
@@ -1636,7 +1826,7 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
                 type="button"
                 onClick={handleNextTrack}
                 disabled={!canControlPlayback}
-                className={`transition-colors ${
+                className={`transition-colors p-1 ${
                   canControlPlayback
                     ? 'text-neutral-400 hover:text-white cursor-pointer'
                     : 'text-neutral-600 cursor-not-allowed opacity-50'
@@ -1649,7 +1839,7 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
               <button
                 type="button"
                 onClick={() => setIsRepeat(!isRepeat)}
-                className={`relative transition-colors cursor-pointer ${
+                className={`hidden xs:block relative transition-colors cursor-pointer ${
                   isRepeat ? 'text-emerald-400' : 'text-neutral-500 hover:text-neutral-300'
                 }`}
                 title="Repeat"
@@ -1667,17 +1857,18 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
             </div>
           </div>
 
-          {/* Right: Volume Slider (Real audio volume) */}
-          <div className="flex items-center justify-end gap-2 w-48">
+          {/* Right: Volume Slider & Mute Toggle */}
+          <div className="flex items-center justify-end gap-2 sm:w-48 shrink-0">
             <button
               type="button"
               onClick={() => setIsMuted(!isMuted)}
-              className="text-neutral-400 hover:text-white transition-colors cursor-pointer"
+              className="text-neutral-400 hover:text-white p-1 rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer"
+              title={isMuted ? 'Unmute' : 'Mute'}
             >
               {isMuted || volume === 0 ? (
-                <VolumeX className="w-4 h-4" />
+                <VolumeX className="w-4 h-4 text-red-400" />
               ) : (
-                <Volume2 className="w-4 h-4" />
+                <Volume2 className="w-4 h-4 text-neutral-300" />
               )}
             </button>
             <input
@@ -1689,7 +1880,7 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
                 setVolume(parseInt(e.target.value, 10));
                 if (isMuted) setIsMuted(false);
               }}
-              className="w-24 h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-white"
+              className="hidden sm:block w-24 h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-white"
             />
           </div>
         </div>

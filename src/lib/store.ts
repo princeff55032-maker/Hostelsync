@@ -40,10 +40,9 @@ export function useHostelStore() {
         localStorage.setItem(STORAGE_KEYS.HOSTELS, JSON.stringify(cleaned));
       }
 
-      const storedActiveCode = localStorage.getItem(STORAGE_KEYS.ACTIVE_CODE);
-      if (storedActiveCode) {
-        setActiveHostelCode(storedActiveCode);
-      }
+      // On browser reload/mount, clear active room session so refresh resets room state
+      localStorage.removeItem(STORAGE_KEYS.ACTIVE_CODE);
+      setActiveHostelCode(null);
     } catch {
       // Ignore storage errors in restricted contexts
     } finally {
@@ -185,6 +184,33 @@ export function useHostelStore() {
     } catch {}
   };
 
+  const deleteHostel = (code: string) => {
+    const raw = (code || '').trim().toUpperCase();
+    const cleanSuffix = raw.replace(/^HS-/, '');
+    const cleanCode = `HS-${cleanSuffix}`;
+
+    setHostels((prev) => {
+      const updated = { ...prev };
+      delete updated[raw];
+      delete updated[cleanCode];
+      delete updated[cleanSuffix];
+      try {
+        localStorage.setItem(STORAGE_KEYS.HOSTELS, JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    setActiveHostelCode((curr) => {
+      if (curr === raw || curr === cleanCode || curr === cleanSuffix) {
+        try {
+          localStorage.removeItem(STORAGE_KEYS.ACTIVE_CODE);
+        } catch {}
+        return null;
+      }
+      return curr;
+    });
+  };
+
   const addAnnouncement = (code: string, title: string, content: string, tag: Announcement['tag'] = 'General') => {
     const formatted = code.trim().toUpperCase();
     const hostel = hostels[formatted];
@@ -253,6 +279,7 @@ export function useHostelStore() {
     createHostel,
     joinHostel,
     leaveHostel,
+    deleteHostel,
     activeHostelCode,
     activeHostel,
     addAnnouncement,

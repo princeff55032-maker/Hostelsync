@@ -17,6 +17,7 @@ export default function Home() {
     createHostel,
     joinHostel,
     leaveHostel,
+    deleteHostel,
     activeHostel,
     addAnnouncement,
     addComplaint,
@@ -53,6 +54,7 @@ export default function Home() {
           hostel={activeHostel}
           userName={userName}
           onLeave={leaveHostel}
+          onDeleteRoom={() => deleteHostel(activeHostel.code)}
           onAddAnnouncement={(title, content, tag) =>
             addAnnouncement(activeHostel.code, title, content, tag)
           }

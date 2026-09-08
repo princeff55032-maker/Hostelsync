@@ -38,6 +38,15 @@ export type SyncEvent =
       playbackPermission: 'everyone' | 'admins';
       addMusicPermission: 'everyone' | 'admins';
       adminPeerIds: string[];
+    }
+  | {
+      type: 'ADMIN_TRANSFER';
+      newAdminPeerId: string;
+      newAdminName: string;
+    }
+  | {
+      type: 'ROOM_DELETED';
+      roomCode: string;
     };
 
 export class RoomSync {
