@@ -77,9 +77,11 @@ interface ChatMessage {
 export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
   // Audio & Sync References
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const syncRef = useRef<RoomSync | null>(null);
   const isSyncingFromRemote = useRef<boolean>(false);
   const lastAudioTimeRef = useRef<number>(-1);
+  const [hasAudioUnlocked, setHasAudioUnlocked] = useState<boolean>(true);
 
   // Permissions State (Real-time Synced across tabs/devices)
   const [playbackPermission, setPlaybackPermission] = useState<'everyone' | 'admins'>('everyone');
@@ -194,6 +196,49 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
       handleRemoteSyncEvent(event);
     });
 
+    // Receive incoming live WebRTC audio stream from host/peers
+    sync.onStream((incomingStream) => {
+      if (remoteAudioRef.current) {
+        remoteAudioRef.current.srcObject = incomingStream;
+        audioEngine.resume();
+        remoteAudioRef.current.play().catch(() => {
+          setHasAudioUnlocked(false);
+        });
+      }
+    });
+
+    // Receive incoming audio file buffer over WebRTC DataChannel
+    sync.onFile((fileData) => {
+      try {
+        const blob = new Blob([fileData.buffer], { type: fileData.type || 'audio/mpeg' });
+        const localBlobUrl = URL.createObjectURL(blob);
+
+        setTracks((prev) => {
+          const exists = prev.find((t) => t.id === fileData.trackId);
+          if (exists) {
+            return prev.map((t) => (t.id === fileData.trackId ? { ...t, url: localBlobUrl } : t));
+          }
+          const receivedTrack: RealTrack = {
+            id: fileData.trackId,
+            title: fileData.title,
+            artist: fileData.artist,
+            duration: fileData.duration,
+            durationSeconds: fileData.durationSeconds,
+            addedBy: fileData.addedBy || 'Peer',
+            sourceType: 'device',
+            url: localBlobUrl,
+          };
+          const nextList = [...prev, receivedTrack];
+          if (prev.length === 0) {
+            setCurrentTrackIndex(0);
+          }
+          return nextList;
+        });
+      } catch (err) {
+        console.warn('Error unpacking received audio file:', err);
+      }
+    });
+
     // Clock calibration interval
     const statsInterval = setInterval(() => {
       setLiveRtt(sync.measuredRtt);
@@ -258,9 +303,25 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
       case 'AUDIO_PLAY': {
         isSyncingFromRemote.current = true;
         setIsPlaying(true);
-        if (audioRef.current && Math.abs(audioRef.current.currentTime - event.currentTime) > 0.3) {
-          audioRef.current.currentTime = event.currentTime;
+        if (event.trackId) {
+          setTracks((prev) => {
+            const idx = prev.findIndex((t) => t.id === event.trackId);
+            if (idx !== -1 && idx !== currentTrackIndex) {
+              setCurrentTrackIndex(idx);
+            }
+            return prev;
+          });
         }
+        if (audioRef.current) {
+          if (Math.abs(audioRef.current.currentTime - event.currentTime) > 0.3) {
+            audioRef.current.currentTime = event.currentTime;
+          }
+          audioEngine.resume();
+          audioRef.current.play().catch(() => {
+            setHasAudioUnlocked(false);
+          });
+        }
+        setCurrentTime(event.currentTime);
         setTimeout(() => {
           isSyncingFromRemote.current = false;
         }, 100);
@@ -427,6 +488,11 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
       audioEngine.playAmbientChord(volume);
       if (audioRef.current && activeTrack?.url && activeTrack.sourceType !== 'youtube') {
         audioRef.current.play().catch(() => {});
+        audioEngine.attachMediaElement(audioRef.current);
+        const liveStream = audioEngine.getOutputStream();
+        if (liveStream && syncRef.current) {
+          syncRef.current.streamAudio(liveStream);
+        }
       }
     } else {
       if (audioRef.current && activeTrack?.sourceType !== 'youtube') {
@@ -543,8 +609,31 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
     if (syncRef.current) {
       syncRef.current.broadcast({
         type: 'QUEUE_ADD',
-        track: newTrk,
+        track: {
+          ...newTrk,
+          file: undefined, // strip raw File object for JSON broadcast
+        },
       });
+
+      // Broadcast raw audio file buffer over WebRTC DataChannel to all devices
+      if (data.file) {
+        data.file.arrayBuffer().then((buffer) => {
+          if (syncRef.current) {
+            syncRef.current.broadcastFile({
+              trackId: newTrk.id,
+              title: newTrk.title,
+              artist: newTrk.artist,
+              duration: newTrk.duration,
+              durationSeconds: newTrk.durationSeconds,
+              addedBy: effectiveUserName,
+              buffer,
+              type: data.file?.type || 'audio/mpeg',
+            });
+          }
+        }).catch((err) => {
+          console.warn('Error reading audio buffer for peer transfer:', err);
+        });
+      }
     }
 
     // Post real chat announcement
@@ -777,6 +866,39 @@ export function HostelRoom({ hostel, userName, onLeave }: HostelRoomProps) {
           </button>
         </div>
       </header>
+
+      {/* Autoplay Unlock Notice for Mobile Browsers */}
+      {!hasAudioUnlocked && (
+        <div
+          onClick={() => {
+            audioEngine.resume();
+            if (audioRef.current && activeTrack?.url) {
+              audioRef.current.play().catch(() => {});
+            }
+            if (remoteAudioRef.current && remoteAudioRef.current.srcObject) {
+              remoteAudioRef.current.play().catch(() => {});
+            }
+            setHasAudioUnlocked(true);
+          }}
+          className="bg-emerald-500 text-black px-4 py-2 text-xs font-bold flex items-center justify-between cursor-pointer animate-pulse shrink-0 select-none z-30"
+        >
+          <div className="flex items-center gap-2">
+            <Volume2 className="w-4 h-4" />
+            <span>Audio paused by mobile browser. Tap here to listen live!</span>
+          </div>
+          <span className="bg-black text-white px-2.5 py-0.5 rounded text-[10px] uppercase tracking-wider font-semibold">
+            Listen
+          </span>
+        </div>
+      )}
+
+      {/* Remote WebRTC Live Audio Stream Receiver */}
+      <audio
+        ref={remoteAudioRef}
+        autoPlay
+        playsInline
+        className="hidden"
+      />
 
       {/* Mobile Navigation Tabs (visible only on mobile/tablet < lg) */}
       <div className="lg:hidden flex items-center bg-neutral-900/95 border-b border-neutral-800 px-2 py-1.5 shrink-0 gap-1 select-none">

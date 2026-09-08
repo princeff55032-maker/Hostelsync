@@ -87,6 +87,23 @@ class AudioEngine {
     this.isPipelineActive = true;
   }
 
+  private streamDestination: MediaStreamAudioDestinationNode | null = null;
+
+  // Get live WebRTC stream of audio pipeline output for real-time peer streaming
+  public getOutputStream(): MediaStream | null {
+    try {
+      const ctx = this.getContext();
+      this.ensurePipeline();
+      if (!this.streamDestination && this.masterGain) {
+        this.streamDestination = ctx.createMediaStreamDestination();
+        this.masterGain.connect(this.streamDestination);
+      }
+      return this.streamDestination ? this.streamDestination.stream : null;
+    } catch {
+      return null;
+    }
+  }
+
   // Connect an HTML5 <audio> element to the studio filter pipeline
   public attachMediaElement(element: HTMLAudioElement): void {
     try {

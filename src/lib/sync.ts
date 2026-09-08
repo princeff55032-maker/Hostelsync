@@ -12,6 +12,17 @@ export interface Peer {
   deviceType: string;
 }
 
+export interface TrackFileData {
+  trackId: string;
+  title: string;
+  artist: string;
+  duration: string;
+  durationSeconds: number;
+  addedBy: string;
+  buffer: ArrayBuffer;
+  type: string;
+}
+
 export type SyncEvent =
   | { type: 'PEER_PING'; peerId: string; name: string; isHost: boolean; timestamp: number }
   | { type: 'PEER_PONG'; peerId: string; name: string; origTimestamp: number }
@@ -33,15 +44,17 @@ export class RoomSync {
   private channel: BroadcastChannel | null = null;
   private trysteroRoom: any = null;
   private sendWebRtcAction: ((data: any) => Promise<any>) | null = null;
+  private sendFileAction: ((data: any) => Promise<any>) | null = null;
   private roomCode: string;
   public peerId: string;
   public peerName: string;
   public isHost: boolean;
   private onEventCallback: ((event: SyncEvent) => void) | null = null;
+  private onStreamCallback: ((stream: MediaStream, peerId: string) => void) | null = null;
+  private onFileCallback: ((fileData: TrackFileData) => void) | null = null;
   private heartbeatInterval: any = null;
   public measuredRtt: number = 2.4;
   public measuredOffset: number = 0;
-  private processedEvents: Set<string> = new Set();
 
   constructor(roomCode: string, peerName: string, isHost: boolean = false) {
     this.roomCode = roomCode;
@@ -62,12 +75,31 @@ export class RoomSync {
       try {
         const cleanRoom = roomCode.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
         const room = joinRoom({ appId: 'hostelsync_sync_v2' }, cleanRoom);
+        this.trysteroRoom = room;
+
         const action = room.makeAction<any>('sync_action');
         this.sendWebRtcAction = (data: any) => action.send(data);
 
         action.onMessage = (data: any) => {
           if (data) {
             this.handleIncomingMessage(data as SyncEvent, 'webrtc');
+          }
+        };
+
+        // Binary audio file transfer action across devices
+        const fileAction = room.makeAction<any>('file_sync');
+        this.sendFileAction = (data: any) => fileAction.send(data);
+
+        fileAction.onMessage = (data: any) => {
+          if (data && this.onFileCallback) {
+            this.onFileCallback(data as TrackFileData);
+          }
+        };
+
+        // Live real-time audio MediaStream receiver
+        room.onPeerStream = (stream: MediaStream, fromPeerId: string) => {
+          if (stream && this.onStreamCallback) {
+            this.onStreamCallback(stream, fromPeerId);
           }
         };
 
@@ -100,6 +132,32 @@ export class RoomSync {
 
   public setEventHandler(callback: (event: SyncEvent) => void) {
     this.onEventCallback = callback;
+  }
+
+  public onStream(callback: (stream: MediaStream, peerId: string) => void) {
+    this.onStreamCallback = callback;
+  }
+
+  public onFile(callback: (fileData: TrackFileData) => void) {
+    this.onFileCallback = callback;
+  }
+
+  public streamAudio(stream: MediaStream) {
+    if (this.trysteroRoom && typeof this.trysteroRoom.addStream === 'function') {
+      try {
+        this.trysteroRoom.addStream(stream);
+      } catch (err) {
+        console.warn('addStream error:', err);
+      }
+    }
+  }
+
+  public broadcastFile(fileData: TrackFileData) {
+    if (this.sendFileAction) {
+      try {
+        this.sendFileAction(fileData).catch(() => {});
+      } catch {}
+    }
   }
 
   private startHeartbeat() {
