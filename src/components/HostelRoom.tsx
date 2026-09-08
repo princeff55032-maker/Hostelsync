@@ -738,6 +738,9 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
     }
   };
 
+  // Keep the ref always pointing to the latest handler (critical for event dispatching)
+  handleRemoteSyncEventRef.current = handleRemoteSyncEvent;
+
   // Real Audio Event Listeners with throttled time updates
   useEffect(() => {
     const audio = audioRef.current;
