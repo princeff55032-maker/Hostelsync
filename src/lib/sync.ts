@@ -49,6 +49,10 @@ export type SyncEvent =
       roomCode: string;
     }
   | {
+      type: 'REQUEST_ROOM_STATE';
+      peerId: string;
+    }
+  | {
       type: 'ROOM_STATE_SYNC';
       tracks: any[];
       currentTrackIndex: number;
@@ -222,6 +226,23 @@ export class RoomSync {
       isHost: this.isHost,
       timestamp: performance.now(),
     });
+
+    // If joining as non-host, automatically request room state from host once connections open
+    if (!this.isHost) {
+      setTimeout(() => {
+        this.broadcast({
+          type: 'REQUEST_ROOM_STATE',
+          peerId: this.peerId,
+        });
+      }, 500);
+
+      setTimeout(() => {
+        this.broadcast({
+          type: 'REQUEST_ROOM_STATE',
+          peerId: this.peerId,
+        });
+      }, 1600);
+    }
 
     // Ping every 2.5 seconds to maintain real active peer list across all devices
     this.heartbeatInterval = setInterval(() => {

@@ -110,7 +110,7 @@ export function useHostelStore() {
 
   const createHostel = (name: string, residentName?: string, roomsCount = 40): { code: string; hostel: Hostel } => {
     const code = generateHostelCode();
-    const creatorName = residentName || userName;
+    const creatorName = (residentName || userName || '').trim() || 'Admin';
     const spaceName = name.trim() || `Space #${code.replace('HS-', '')}`;
 
     const newHostel: Hostel = {
@@ -119,7 +119,7 @@ export function useHostelStore() {
       totalResidents: 1,
       totalRooms: roomsCount,
       address: 'Hostel Campus, Wing A',
-      warden: 'Campus Administrator',
+      warden: creatorName,
       residents: [
         { id: 'creator', name: creatorName, room: '101', status: 'In room', floor: 1, isUser: true },
       ],
@@ -152,6 +152,7 @@ export function useHostelStore() {
     setHostels(updated);
     try {
       localStorage.setItem(STORAGE_KEYS.HOSTELS, JSON.stringify(updated));
+      sessionStorage.setItem(`hostelsync_creator_${code}`, 'true');
     } catch {}
 
     return { code, hostel: newHostel };
@@ -178,6 +179,11 @@ export function useHostelStore() {
   };
 
   const leaveHostel = () => {
+    if (activeHostelCode) {
+      try {
+        sessionStorage.removeItem(`hostelsync_creator_${activeHostelCode}`);
+      } catch {}
+    }
     setActiveHostelCode(null);
     try {
       localStorage.removeItem(STORAGE_KEYS.ACTIVE_CODE);
@@ -269,6 +275,11 @@ export function useHostelStore() {
     ? hostels[activeHostelCode] || findHostel(activeHostelCode) || null
     : null;
 
+  const isHost =
+    typeof window !== 'undefined' && activeHostelCode
+      ? sessionStorage.getItem(`hostelsync_creator_${activeHostelCode}`) === 'true'
+      : false;
+
   return {
     isInitialized,
     userName,
@@ -282,6 +293,7 @@ export function useHostelStore() {
     deleteHostel,
     activeHostelCode,
     activeHostel,
+    isHost,
     addAnnouncement,
     addComplaint,
   };

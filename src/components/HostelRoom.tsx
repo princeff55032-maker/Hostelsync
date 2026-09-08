@@ -48,6 +48,7 @@ import { SpatialAudioTab, SpatialFilterParams } from './SpatialAudioTab';
 interface HostelRoomProps {
   hostel: Hostel;
   userName: string;
+  isHost?: boolean;
   onLeave: () => void;
   onDeleteRoom?: () => void;
   onAddAnnouncement?: (title: string, content: string, tag: any) => void;
@@ -75,7 +76,7 @@ interface ChatMessage {
   isSelf: boolean;
 }
 
-export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRoomProps) {
+export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDeleteRoom }: HostelRoomProps) {
   // Audio & Sync References
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -93,23 +94,21 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
 
   const effectiveUserName = userName?.trim() || 'Resident';
 
-  // Room host & Admin detection
-  const isRoomHost =
-    Boolean(hostel.warden && effectiveUserName && hostel.warden.toLowerCase() === effectiveUserName.toLowerCase()) ||
-    syncRef.current?.isHost === true ||
-    promotedToAdmin;
+  // True room host & Admin detection
+  const isRoomHost = Boolean(isHost || promotedToAdmin);
 
   const isUserAdmin =
     isRoomHost ||
-    adminPeerIds.includes(syncRef.current?.peerId || '') ||
-    adminPeerIds.includes(effectiveUserName.toLowerCase());
+    (syncRef.current?.peerId ? adminPeerIds.includes(syncRef.current.peerId) : false) ||
+    adminPeerIds.some((a) => a.toLowerCase() === effectiveUserName.toLowerCase());
 
   // References for unload & refresh listeners
   const connectedPeersRef = useRef<Peer[]>([]);
-  const isUserAdminRef = useRef<boolean>(false);
+  const isUserAdminRef = useRef<boolean>(isUserAdmin);
   const playbackPermissionRef = useRef<'everyone' | 'admins'>(playbackPermission);
   const addMusicPermissionRef = useRef<'everyone' | 'admins'>(addMusicPermission);
   const adminPeerIdsRef = useRef<string[]>(adminPeerIds);
+  const handleRemoteSyncEventRef = useRef<(event: SyncEvent) => void>(() => {});
 
   isUserAdminRef.current = isUserAdmin;
   playbackPermissionRef.current = playbackPermission;
@@ -267,11 +266,11 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
 
   // Initialize Real Synchronization Channel
   useEffect(() => {
-    const sync = new RoomSync(hostel.code, effectiveUserName, true);
+    const sync = new RoomSync(hostel.code, effectiveUserName, isRoomHost);
     syncRef.current = sync;
 
     sync.setEventHandler((event: SyncEvent) => {
-      handleRemoteSyncEvent(event);
+      handleRemoteSyncEventRef.current(event);
     });
 
     // Receive incoming live WebRTC audio stream from host/peers
@@ -351,25 +350,6 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
       setConnectedPeers((prev) => {
         const alive = prev.filter((p) => now - p.lastSeen < 5000);
         connectedPeersRef.current = alive;
-
-        // If previous admin disconnected and we are not admin yet, automatically promote self
-        if (!isUserAdminRef.current && alive.length > 0) {
-          const hasAliveAdmin = alive.some((p) => adminPeerIdsRef.current.includes(p.id) || p.isHost);
-          if (!hasAliveAdmin) {
-            setPromotedToAdmin(true);
-            setAdminPeerIds((curr) => [...curr, sync.peerId, effectiveUserName.toLowerCase()]);
-            setMessages((msgs) => [
-              ...msgs,
-              {
-                id: `msg-succ-${Date.now()}`,
-                sender: 'HostelSync',
-                text: '👑 Previous host disconnected. You are now the Admin of this room!',
-                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                isSelf: false,
-              },
-            ]);
-          }
-        }
         return alive;
       });
     }, 1000);
@@ -461,6 +441,9 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
         break;
       }
       case 'ROOM_STATE_SYNC': {
+        // Only non-admin members should accept room state sync from the admin
+        if (isUserAdminRef.current) break;
+
         setPlaybackPermission(event.playbackPermission);
         setAddMusicPermission(event.addMusicPermission);
         setAdminPeerIds(event.adminPeerIds || []);
@@ -511,6 +494,44 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
         }
         break;
       }
+      case 'REQUEST_ROOM_STATE': {
+        // When a peer requests state, the admin broadcasts the room queue and playback position
+        if (isUserAdminRef.current && syncRef.current) {
+          syncRef.current.broadcast({
+            type: 'ROOM_STATE_SYNC',
+            tracks: tracksRef.current.map((t) => ({
+              ...t,
+              file: undefined,
+              url: t.sourceType === 'device' ? undefined : t.url,
+            })),
+            currentTrackIndex: currentTrackIndexRef.current,
+            isPlaying: isPlayingRef.current,
+            currentTime: audioRef.current?.currentTime ?? currentTimeRef.current,
+            serverTimestamp: performance.now(),
+            playbackPermission: playbackPermissionRef.current,
+            addMusicPermission: addMusicPermissionRef.current,
+            adminPeerIds: adminPeerIdsRef.current,
+          });
+
+          // Also re-send audio buffer if the current track is a local file
+          const curTrk = tracksRef.current[currentTrackIndexRef.current];
+          if (curTrk?.file && syncRef.current) {
+            curTrk.file.arrayBuffer().then((buf) => {
+              syncRef.current?.broadcastFile({
+                trackId: curTrk.id,
+                title: curTrk.title,
+                artist: curTrk.artist,
+                duration: curTrk.duration,
+                durationSeconds: curTrk.durationSeconds,
+                addedBy: curTrk.addedBy,
+                buffer: buf,
+                type: curTrk.file?.type || 'audio/mpeg',
+              });
+            }).catch(() => {});
+          }
+        }
+        break;
+      }
       case 'PEER_PING': {
         setConnectedPeers((prev) => {
           const exists = prev.find((p) => p.id === event.peerId);
@@ -518,7 +539,7 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
           if (exists) {
             nextList = prev.map((p) =>
               p.id === event.peerId
-                ? { ...p, name: event.name, lastSeen: performance.now() }
+                ? { ...p, name: event.name, isHost: event.isHost, lastSeen: performance.now() }
                 : p
             );
           } else {
@@ -537,11 +558,15 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
           return nextList;
         });
 
-        // If we are admin, announce full room state, queue, and current playing position to the new peer
-        if (isUserAdmin && syncRef.current) {
+        // ONLY the true admin announces room state to peers, never non-admin peers
+        if (isUserAdminRef.current && syncRef.current && event.peerId !== syncRef.current.peerId) {
           syncRef.current.broadcast({
             type: 'ROOM_STATE_SYNC',
-            tracks: tracksRef.current.map((t) => ({ ...t, file: undefined })),
+            tracks: tracksRef.current.map((t) => ({
+              ...t,
+              file: undefined,
+              url: t.sourceType === 'device' ? undefined : t.url,
+            })),
             currentTrackIndex: currentTrackIndexRef.current,
             isPlaying: isPlayingRef.current,
             currentTime: audioRef.current?.currentTime ?? currentTimeRef.current,
@@ -551,7 +576,7 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
             adminPeerIds: adminPeerIdsRef.current,
           });
 
-          // Also, if active track has a local file buffer, re-send it to new peer so they have the audio file
+          // Also, if active track has a local file buffer, re-send it to new peer
           const curTrk = tracksRef.current[currentTrackIndexRef.current];
           if (curTrk?.file && syncRef.current) {
             curTrk.file.arrayBuffer().then((buf) => {
@@ -581,12 +606,19 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
           const remaining = prev.filter((p) => p.id !== event.peerId);
           connectedPeersRef.current = remaining;
 
-          // If departing peer was an admin, automatically transfer admin to first remaining peer
-          if (!isUserAdminRef.current) {
+          // If departing peer was an admin, automatically transfer admin to first remaining peer deterministically
+          if (!isUserAdminRef.current && remaining.length > 0 && remaining[0].id === syncRef.current?.peerId) {
             const hasAliveAdmin = remaining.some((p) => adminPeerIdsRef.current.includes(p.id) || p.isHost);
             if (!hasAliveAdmin) {
               setPromotedToAdmin(true);
-              setAdminPeerIds((curr) => [...curr, syncRef.current?.peerId || '', effectiveUserName.toLowerCase()]);
+              const nextAdmins = [syncRef.current.peerId, effectiveUserName.toLowerCase()];
+              setAdminPeerIds(nextAdmins);
+              syncRef.current.broadcast({
+                type: 'PERMISSIONS_UPDATE',
+                playbackPermission: playbackPermissionRef.current,
+                addMusicPermission: addMusicPermissionRef.current,
+                adminPeerIds: nextAdmins,
+              });
               setMessages((msgs) => [
                 ...msgs,
                 {
@@ -778,7 +810,15 @@ export function HostelRoom({ hostel, userName, onLeave, onDeleteRoom }: HostelRo
       if (currentTimeRef.current > 0 && Math.abs(audio.currentTime - currentTimeRef.current) > 0.5) {
         audio.currentTime = currentTimeRef.current;
       }
-      audio.play().catch(() => {
+      audio.play().then(() => {
+        if (isUserAdminRef.current && syncRef.current) {
+          audioEngine.attachMediaElement(audio);
+          const liveStream = audioEngine.getOutputStream();
+          if (liveStream) {
+            syncRef.current.streamAudio(liveStream);
+          }
+        }
+      }).catch(() => {
         // Handled by unlock overlay / user interaction
       });
     } else {

@@ -19,6 +19,7 @@ export default function Home() {
     leaveHostel,
     deleteHostel,
     activeHostel,
+    isHost,
     addAnnouncement,
     addComplaint,
   } = useHostelStore();
@@ -53,6 +54,7 @@ export default function Home() {
         <HostelRoom
           hostel={activeHostel}
           userName={userName}
+          isHost={isHost}
           onLeave={leaveHostel}
           onDeleteRoom={() => deleteHostel(activeHostel.code)}
           onAddAnnouncement={(title, content, tag) =>
