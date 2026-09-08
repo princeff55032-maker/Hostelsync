@@ -72,18 +72,26 @@ export function CodeInput({ onJoin, findHostel }: CodeInputProps) {
     hiddenInputRef.current?.focus();
   };
 
+  const handleJoin = (targetCode?: string) => {
+    const raw = (targetCode || matchedHostel?.code || codeValue || '').trim().toUpperCase();
+    const suffix = raw.replace(/^HS-/, '');
+    const code = suffix.length === 4 ? `HS-${suffix}` : (raw.startsWith('HS-') ? raw : `HS-${raw}`);
+    if (suffix.length === 4 || code.startsWith('HS-')) {
+      hiddenInputRef.current?.blur();
+      onJoin(code);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleJoin();
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (matchedHostel) {
-      onJoin(matchedHostel.code);
-    } else if (fullFormattedCode) {
-      const found = findHostel(fullFormattedCode);
-      if (found) {
-        onJoin(found.code);
-      } else {
-        setErrorMessage(`Hostel ${fullFormattedCode} not found`);
-      }
-    }
+    handleJoin();
   };
 
   const quickSelect = (sampleCode: string) => {
@@ -108,6 +116,7 @@ export function CodeInput({ onJoin, findHostel }: CodeInputProps) {
           type="text"
           value={codeValue}
           onChange={handleInputChange}
+          onKeyDown={handleKeyDown}
           maxLength={6}
           autoComplete="off"
           autoCorrect="off"
@@ -185,8 +194,17 @@ export function CodeInput({ onJoin, findHostel }: CodeInputProps) {
           </div>
 
           <button
-            type="submit"
-            className="w-full mt-3 py-2 px-4 bg-white text-black hover:bg-neutral-200 rounded-md font-medium text-xs tracking-wide transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-[0.99]"
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              handleJoin(matchedHostel.code);
+            }}
+            onPointerDown={(e) => {
+              // Prevents mobile virtual keyboard blur from cancelling the tap
+              e.preventDefault();
+            }}
+            className="w-full mt-3 py-2.5 px-4 bg-white text-black hover:bg-neutral-200 active:bg-neutral-300 rounded-md font-medium text-xs tracking-wide transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-[0.99] select-none"
           >
             <span>Enter Hostel</span>
             <ArrowRight className="w-3.5 h-3.5" />

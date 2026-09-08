@@ -159,25 +159,18 @@ export function useHostelStore() {
   };
 
   const joinHostel = (code: string) => {
-    const formatted = code.trim().toUpperCase();
-    const cleanCode = formatted.startsWith('HS-') ? formatted : `HS-${formatted}`;
+    const raw = (code || '').trim().toUpperCase();
+    const cleanSuffix = raw.replace(/^HS-/, '');
+    const cleanCode = cleanSuffix.length === 4 ? `HS-${cleanSuffix}` : (raw.startsWith('HS-') ? raw : `HS-${raw}`);
 
-    let targetHostel = hostels[cleanCode];
-    if (!targetHostel) {
-      const found = findHostel(cleanCode);
-      if (found) {
-        targetHostel = found;
-        const updated = { ...hostels, [cleanCode]: found };
-        setHostels(updated);
-        try {
-          localStorage.setItem(STORAGE_KEYS.HOSTELS, JSON.stringify(updated));
-        } catch {}
-      }
-    }
+    let targetHostel = hostels[cleanCode] || hostels[raw] || findHostel(cleanCode) || findHostel(raw);
 
     if (targetHostel) {
+      const updated = { ...hostels, [cleanCode]: targetHostel };
+      setHostels(updated);
       setActiveHostelCode(cleanCode);
       try {
+        localStorage.setItem(STORAGE_KEYS.HOSTELS, JSON.stringify(updated));
         localStorage.setItem(STORAGE_KEYS.ACTIVE_CODE, cleanCode);
       } catch {}
       return true;
