@@ -113,6 +113,13 @@ export function useHostelStore() {
     const creatorName = (residentName || userName || '').trim() || 'Admin';
     const spaceName = name.trim() || `Space #${code.replace('HS-', '')}`;
 
+    if (creatorName && creatorName !== userName) {
+      setUserName(creatorName);
+      try {
+        localStorage.setItem(STORAGE_KEYS.USER_NAME, creatorName);
+      } catch {}
+    }
+
     const newHostel: Hostel = {
       code,
       name: spaceName,
@@ -153,6 +160,7 @@ export function useHostelStore() {
     try {
       localStorage.setItem(STORAGE_KEYS.HOSTELS, JSON.stringify(updated));
       sessionStorage.setItem(`hostelsync_creator_${code}`, 'true');
+      localStorage.setItem(`hostelsync_creator_${code}`, 'true');
     } catch {}
 
     // Register on server for cross-device discovery
@@ -165,6 +173,20 @@ export function useHostelStore() {
     } catch {}
 
     return { code, hostel: newHostel };
+  };
+
+  const enterCreatedHostel = (code: string) => {
+    const raw = (code || '').trim().toUpperCase();
+    const cleanSuffix = raw.replace(/^HS-/, '');
+    const cleanCode = cleanSuffix.length === 4 ? `HS-${cleanSuffix}` : (raw.startsWith('HS-') ? raw : `HS-${raw}`);
+
+    setActiveHostelCode(cleanCode);
+    try {
+      sessionStorage.setItem(`hostelsync_creator_${cleanCode}`, 'true');
+      localStorage.setItem(`hostelsync_creator_${cleanCode}`, 'true');
+      localStorage.setItem(STORAGE_KEYS.ACTIVE_CODE, cleanCode);
+    } catch {}
+    return true;
   };
 
   const joinHostel = async (code: string): Promise<boolean> => {
@@ -182,8 +204,6 @@ export function useHostelStore() {
       setHostels(updated);
       setActiveHostelCode(cleanCode);
       try {
-        sessionStorage.removeItem(`hostelsync_creator_${cleanCode}`);
-        sessionStorage.removeItem(`hostelsync_creator_${raw}`);
         localStorage.setItem(STORAGE_KEYS.HOSTELS, JSON.stringify(updated));
         localStorage.setItem(STORAGE_KEYS.ACTIVE_CODE, cleanCode);
       } catch {}
@@ -295,7 +315,9 @@ export function useHostelStore() {
 
   const isHost =
     typeof window !== 'undefined' && activeHostelCode
-      ? sessionStorage.getItem(`hostelsync_creator_${activeHostelCode}`) === 'true'
+      ? sessionStorage.getItem(`hostelsync_creator_${activeHostelCode}`) === 'true' ||
+        localStorage.getItem(`hostelsync_creator_${activeHostelCode}`) === 'true' ||
+        Boolean(activeHostel?.warden && userName && activeHostel.warden.trim().toLowerCase() === userName.trim().toLowerCase())
       : false;
 
   return {
@@ -307,6 +329,7 @@ export function useHostelStore() {
     findHostel,
     findHostelAsync,
     createHostel,
+    enterCreatedHostel,
     joinHostel,
     leaveHostel,
     deleteHostel,

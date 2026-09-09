@@ -95,7 +95,15 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
   const effectiveUserName = userName?.trim() || 'Resident';
 
   // True room host & Admin detection
-  const isRoomHost = Boolean(isHost || promotedToAdmin);
+  const isRoomHost = Boolean(
+    isHost ||
+    promotedToAdmin ||
+    (typeof window !== 'undefined' && (
+      sessionStorage.getItem(`hostelsync_creator_${hostel.code}`) === 'true' ||
+      localStorage.getItem(`hostelsync_creator_${hostel.code}`) === 'true'
+    )) ||
+    (hostel.warden && effectiveUserName && hostel.warden.trim().toLowerCase() === effectiveUserName.trim().toLowerCase())
+  );
 
   const isUserAdmin =
     isRoomHost ||

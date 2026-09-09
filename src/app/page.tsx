@@ -16,6 +16,7 @@ export default function Home() {
     findHostel,
     findHostelAsync,
     createHostel,
+    enterCreatedHostel,
     joinHostel,
     leaveHostel,
     deleteHostel,
@@ -84,8 +85,11 @@ export default function Home() {
         isOpen={isCreateOpen}
         onClose={() => setIsCreateOpen(false)}
         defaultUserName={userName}
-        onCreate={createHostel}
-        onEnterHostel={(code) => joinHostel(code)}
+        onCreate={(name, resName, rooms) => {
+          if (resName) changeUserName(resName);
+          return createHostel(name, resName, rooms);
+        }}
+        onEnterHostel={(code) => enterCreatedHostel(code)}
       />
 
       {/* About Modal */}
