@@ -67,42 +67,42 @@ export function useHostelStore() {
   };
 
   const findHostel = (code: string): Hostel | null => {
-    const formatted = code.trim().toUpperCase();
-    const existing = hostels[formatted];
+    const raw = code.trim().toUpperCase();
+    const cleanSuffix = raw.replace(/^HS-/, '');
+    const formatted = cleanSuffix.length === 4 ? `HS-${cleanSuffix}` : raw;
+
+    const existing = hostels[formatted] || hostels[raw] || hostels[cleanSuffix];
     if (existing) {
-      if (existing.name === 'Green Valley Hostel' || existing.name === 'North Campus Residency') {
-        return {
-          ...existing,
-          name: `Room #${formatted.replace('HS-', '')}`,
-        };
-      }
       return existing;
     }
+    return null;
+  };
 
-    // Auto-create room dynamically when joining by any 4-character code (BeatSync behavior)
-    const cleanSuffix = formatted.replace(/^HS-/, '');
-    if (cleanSuffix.length === 4) {
-      const dynamicRoom: Hostel = {
-        code: formatted.startsWith('HS-') ? formatted : `HS-${formatted}`,
-        name: `Room #${cleanSuffix}`,
-        totalResidents: 1,
-        totalRooms: 40,
-        address: 'HostelSync Space',
-        warden: 'Admin',
-        residents: [{ id: 'creator', name: userName, room: '101', status: 'In room', floor: 1, isUser: true }],
-        rooms: [{ roomNumber: '101', floor: 1, capacity: 2, occupied: 1, residents: [userName] }],
-        announcements: [],
-        complaints: [],
-        messMenu: DEFAULT_MESS_MENU,
-        payments: {
-          messDues: 0,
-          roomMaintenance: 0,
-          laundryCredits: 10,
-          nextDueDate: '1st of next month',
-          transactions: [],
-        },
-      };
-      return dynamicRoom;
+  const findHostelAsync = async (code: string): Promise<Hostel | null> => {
+    const local = findHostel(code);
+    if (local) return local;
+
+    const raw = code.trim().toUpperCase();
+    const cleanSuffix = raw.replace(/^HS-/, '');
+    const formatted = cleanSuffix.length === 4 ? `HS-${cleanSuffix}` : raw;
+
+    try {
+      const res = await fetch(`/api/rooms?code=${encodeURIComponent(formatted)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.exists && data.room) {
+          setHostels((prev) => {
+            const updated = { ...prev, [formatted]: data.room };
+            try {
+              localStorage.setItem(STORAGE_KEYS.HOSTELS, JSON.stringify(updated));
+            } catch {}
+            return updated;
+          });
+          return data.room;
+        }
+      }
+    } catch {
+      // Ignore network errors
     }
 
     return null;
@@ -155,15 +155,27 @@ export function useHostelStore() {
       sessionStorage.setItem(`hostelsync_creator_${code}`, 'true');
     } catch {}
 
+    // Register on server for cross-device discovery
+    try {
+      fetch('/api/rooms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room: newHostel }),
+      }).catch(() => {});
+    } catch {}
+
     return { code, hostel: newHostel };
   };
 
-  const joinHostel = (code: string) => {
+  const joinHostel = async (code: string): Promise<boolean> => {
     const raw = (code || '').trim().toUpperCase();
     const cleanSuffix = raw.replace(/^HS-/, '');
     const cleanCode = cleanSuffix.length === 4 ? `HS-${cleanSuffix}` : (raw.startsWith('HS-') ? raw : `HS-${raw}`);
 
-    let targetHostel = hostels[cleanCode] || hostels[raw] || findHostel(cleanCode) || findHostel(raw);
+    let targetHostel: Hostel | null = hostels[cleanCode] || hostels[raw] || findHostel(cleanCode);
+    if (!targetHostel) {
+      targetHostel = await findHostelAsync(cleanCode);
+    }
 
     if (targetHostel) {
       const updated = { ...hostels, [cleanCode]: targetHostel };
@@ -207,6 +219,10 @@ export function useHostelStore() {
       } catch {}
       return updated;
     });
+
+    try {
+      fetch(`/api/rooms?code=${encodeURIComponent(cleanCode)}`, { method: 'DELETE' }).catch(() => {});
+    } catch {}
 
     setActiveHostelCode((curr) => {
       if (curr === raw || curr === cleanCode || curr === cleanSuffix) {
@@ -289,6 +305,7 @@ export function useHostelStore() {
     regenerateUserName,
     hostels,
     findHostel,
+    findHostelAsync,
     createHostel,
     joinHostel,
     leaveHostel,

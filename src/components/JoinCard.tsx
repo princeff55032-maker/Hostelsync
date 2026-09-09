@@ -11,7 +11,7 @@ interface JoinCardProps {
   userName?: string;
   onNameChange?: (name: string) => void;
   onRegenerate?: () => void;
-  findHostel: (code: string) => Hostel | null;
+  findHostel: (code: string) => Promise<Hostel | null> | Hostel | null;
   onJoin: (code: string) => void;
   onOpenCreate: () => void;
   onOpenAbout: () => void;

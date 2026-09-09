@@ -7,7 +7,7 @@ import { audioEngine } from '@/lib/audioEngine';
 
 interface CodeInputProps {
   onJoin: (code: string) => void;
-  findHostel: (code: string) => Hostel | null;
+  findHostel: (code: string) => Promise<Hostel | null> | Hostel | null;
 }
 
 export function CodeInput({ onJoin, findHostel }: CodeInputProps) {
@@ -36,18 +36,33 @@ export function CodeInput({ onJoin, findHostel }: CodeInputProps) {
     const suffix = cleanCode.replace(/^HS-/, '');
     if (suffix.length === 4) {
       setIsValidating(true);
-      const timer = setTimeout(() => {
-        const found = findHostel(cleanCode);
-        setIsValidating(false);
-        if (found) {
-          setMatchedHostel(found);
-          setErrorMessage(null);
-        } else {
+      setErrorMessage(null);
+      let isCancelled = false;
+
+      const timer = setTimeout(async () => {
+        try {
+          const found = await Promise.resolve(findHostel(cleanCode));
+          if (isCancelled) return;
+          setIsValidating(false);
+          if (found) {
+            setMatchedHostel(found);
+            setErrorMessage(null);
+          } else {
+            setMatchedHostel(null);
+            setErrorMessage(`No rooms found for ${cleanCode}`);
+          }
+        } catch {
+          if (isCancelled) return;
+          setIsValidating(false);
           setMatchedHostel(null);
-          setErrorMessage(`No hostel found for ${cleanCode}`);
+          setErrorMessage(`No rooms found for ${cleanCode}`);
         }
       }, 250);
-      return () => clearTimeout(timer);
+
+      return () => {
+        isCancelled = true;
+        clearTimeout(timer);
+      };
     } else {
       setMatchedHostel(null);
       setErrorMessage(null);
@@ -73,14 +88,31 @@ export function CodeInput({ onJoin, findHostel }: CodeInputProps) {
     hiddenInputRef.current?.focus();
   };
 
-  const handleJoin = (targetCode?: string) => {
+  const handleJoin = async (targetCode?: string) => {
     const raw = (targetCode || matchedHostel?.code || codeValue || '').trim().toUpperCase();
     const suffix = raw.replace(/^HS-/, '');
     const code = suffix.length === 4 ? `HS-${suffix}` : (raw.startsWith('HS-') ? raw : `HS-${raw}`);
-    if (suffix.length === 4 || code.startsWith('HS-')) {
+
+    if (matchedHostel && matchedHostel.code === code) {
       hiddenInputRef.current?.blur();
       audioEngine.unlockAudio();
       onJoin(code);
+      return;
+    }
+
+    if (suffix.length === 4) {
+      setIsValidating(true);
+      const found = await Promise.resolve(findHostel(code));
+      setIsValidating(false);
+      if (found) {
+        setMatchedHostel(found);
+        hiddenInputRef.current?.blur();
+        audioEngine.unlockAudio();
+        onJoin(found.code);
+      } else {
+        setMatchedHostel(null);
+        setErrorMessage(`No rooms found for ${code}`);
+      }
     }
   };
 

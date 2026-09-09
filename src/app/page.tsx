@@ -14,6 +14,7 @@ export default function Home() {
     changeUserName,
     regenerateUserName,
     findHostel,
+    findHostelAsync,
     createHostel,
     joinHostel,
     leaveHostel,
@@ -70,7 +71,7 @@ export default function Home() {
             userName={userName}
             onNameChange={changeUserName}
             onRegenerate={regenerateUserName}
-            findHostel={findHostel}
+            findHostel={findHostelAsync}
             onJoin={(code) => joinHostel(code)}
             onOpenCreate={() => setIsCreateOpen(true)}
             onOpenAbout={() => setIsAboutOpen(true)}
