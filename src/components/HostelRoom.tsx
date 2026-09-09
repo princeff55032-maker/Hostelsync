@@ -181,12 +181,33 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
   };
 
   const handleTogglePeerAdmin = (peerId: string) => {
-    if (!isUserAdmin) return;
-    const nextAdmins = adminPeerIds.includes(peerId)
-      ? adminPeerIds.filter((id) => id !== peerId)
-      : [...adminPeerIds, peerId];
+    // Only the person who created the room has permission to create or toggle other admins
+    if (!isRoomHost) return;
+    const isNowAdmin = !adminPeerIds.includes(peerId);
+    const nextAdmins = isNowAdmin
+      ? [...adminPeerIds, peerId]
+      : adminPeerIds.filter((id) => id !== peerId);
     setAdminPeerIds(nextAdmins);
     broadcastPermissions(playbackPermission, addMusicPermission, nextAdmins);
+
+    const targetPeer = connectedPeers.find((p) => p.id === peerId);
+    const targetName = targetPeer?.name || 'Resident';
+    const chatNotification: ChatMessage = {
+      id: `msg-adm-toggle-${Date.now()}`,
+      sender: 'HostelSync',
+      text: isNowAdmin
+        ? `👑 ${targetName} was granted Admin permissions by room creator.`
+        : `ℹ️ ${targetName} is no longer an Admin.`,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      isSelf: false,
+    };
+    setMessages((prev) => [...prev, chatNotification]);
+    if (syncRef.current) {
+      syncRef.current.broadcast({
+        type: 'CHAT_MESSAGE',
+        message: chatNotification,
+      });
+    }
   };
 
   // Instant Admin Transfer / Instant Room Deletion on Browser Refresh or Leave
@@ -637,7 +658,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
           if (exists) {
             nextList = prev.map((p) =>
               p.id === event.peerId
-                ? { ...p, name: event.name || p.name, lastSeen: performance.now() }
+                ? { ...p, name: event.name || p.name, isHost: event.isHost !== undefined ? event.isHost : p.isHost, lastSeen: performance.now() }
                 : p
             );
           } else {
@@ -646,7 +667,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
               {
                 id: event.peerId,
                 name: event.name || 'Room Member',
-                isHost: false,
+                isHost: Boolean(event.isHost),
                 lastSeen: performance.now(),
                 deviceType: 'Desktop Browser',
               },
@@ -1677,51 +1698,68 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
               {/* User row: You */}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between px-2.5 py-1.5 bg-neutral-900/90 border border-neutral-800 rounded-lg">
-                  <div className="flex items-center gap-2">
-                    <Headphones className="w-3.5 h-3.5 text-neutral-400" />
-                    {isUserAdmin && <Crown className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />}
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Headphones className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                    {isRoomHost ? (
+                      <span className="text-[9px] bg-amber-500/20 text-amber-400 border border-amber-500/30 font-semibold px-1.5 py-0.2 rounded shrink-0">
+                        Creator
+                      </span>
+                    ) : isUserAdmin ? (
+                      <Crown className="w-3.5 h-3.5 text-amber-400 fill-amber-400 shrink-0" />
+                    ) : null}
                     <span className="text-xs font-medium text-white truncate max-w-[120px]">
                       {effectiveUserName}
                     </span>
                   </div>
-                  <span className="bg-emerald-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
-                    You
-                  </span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="bg-emerald-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      You
+                    </span>
+                  </div>
                 </div>
 
                 {/* Other Real Connected Peers from other tabs/devices */}
                 {connectedPeers.map((peer) => {
-                  const peerIsAdmin = adminPeerIds.includes(peer.id);
+                  const peerIsAdmin = adminPeerIds.includes(peer.id) || Boolean(peer.isHost);
                   return (
                     <div
                       key={peer.id}
                       className="flex items-center justify-between px-2.5 py-1.5 text-xs text-neutral-300 bg-neutral-950/60 border border-neutral-850 rounded-lg group"
                     >
-                      <div className="flex items-center gap-2">
-                        <Laptop className="w-3.5 h-3.5 text-cyan-400" />
-                        {peerIsAdmin && (
-                          <Crown className="w-3 h-3 text-amber-400 fill-amber-400" />
-                        )}
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Laptop className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                        {peer.isHost ? (
+                          <span className="text-[9px] bg-amber-500/20 text-amber-400 border border-amber-500/30 font-semibold px-1.5 py-0.2 rounded shrink-0">
+                            Creator
+                          </span>
+                        ) : peerIsAdmin ? (
+                          <Crown className="w-3 h-3 text-amber-400 fill-amber-400 shrink-0" />
+                        ) : null}
                         <span className="truncate max-w-[120px] text-white font-medium">
                           {peer.name}
                         </span>
                       </div>
 
-                      <div className="flex items-center gap-1.5">
-                        {isUserAdmin && (
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {/* ONLY the person who creates the room has perms to create / toggle other admins */}
+                        {isRoomHost && !peer.isHost ? (
                           <button
                             type="button"
                             onClick={() => handleTogglePeerAdmin(peer.id)}
-                            className={`p-1 rounded transition-colors text-[10px] font-medium flex items-center gap-0.5 cursor-pointer ${
+                            className={`px-1.5 py-0.5 rounded transition-colors text-[10px] font-medium flex items-center gap-1 cursor-pointer ${
                               peerIsAdmin
-                                ? 'text-amber-400 hover:bg-neutral-800'
-                                : 'text-neutral-600 hover:text-amber-400 hover:bg-neutral-800'
+                                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30 hover:bg-amber-500/30'
+                                : 'bg-neutral-800 text-neutral-400 border border-neutral-700 hover:text-white hover:bg-neutral-700'
                             }`}
-                            title={peerIsAdmin ? 'Revoke Admin / DJ' : 'Make Admin / DJ'}
+                            title={peerIsAdmin ? 'Revoke Admin' : 'Make Admin'}
                           >
-                            <Crown className={`w-3 h-3 ${peerIsAdmin ? 'fill-amber-400' : ''}`} />
-                            <span className="text-[9px]">{peerIsAdmin ? 'Admin' : 'Promote'}</span>
+                            <Crown className={`w-3 h-3 ${peerIsAdmin ? 'fill-amber-400 text-amber-400' : 'text-neutral-400'}`} />
+                            <span>{peerIsAdmin ? 'Admin' : '+ Admin'}</span>
                           </button>
+                        ) : (
+                          peerIsAdmin && !peer.isHost && (
+                            <span className="text-[9px] text-amber-400/90 font-medium px-1">Admin</span>
+                          )
                         )}
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                       </div>

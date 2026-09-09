@@ -25,7 +25,7 @@ export interface TrackFileData {
 
 export type SyncEvent =
   | { type: 'PEER_PING'; peerId: string; name: string; isHost: boolean; timestamp: number }
-  | { type: 'PEER_PONG'; peerId: string; name: string; origTimestamp: number }
+  | { type: 'PEER_PONG'; peerId: string; name: string; isHost?: boolean; origTimestamp: number }
   | { type: 'PEER_LEAVE'; peerId: string }
   | { type: 'AUDIO_PLAY'; trackId: string; currentTime: number; serverTimestamp?: number; sentAt?: number }
   | { type: 'AUDIO_PAUSE'; trackId: string; currentTime: number; sentAt?: number }
@@ -272,6 +272,7 @@ export class RoomSync {
           type: 'PEER_PONG',
           peerId: this.peerId,
           name: this.peerName,
+          isHost: this.isHost,
           origTimestamp: event.timestamp,
         });
       }
