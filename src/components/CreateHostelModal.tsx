@@ -74,7 +74,7 @@ export function CreateHostelModal({
           <div>
             <div className="flex items-center gap-2 mb-1">
               <HostelSyncLogo size="sm" iconOnly />
-              <h3 className="text-base font-medium text-white tracking-tight">Create a Hostel</h3>
+              <h3 className="text-base font-medium text-white tracking-tight">Create Room</h3>
             </div>
             <p className="text-xs text-neutral-400 mb-5">
               Set up a shared space and get an instant join code.
@@ -83,12 +83,12 @@ export function CreateHostelModal({
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-xs font-medium text-neutral-300 mb-1.5">
-                  Hostel name
+                  Room name
                 </label>
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Pine Hall Residency"
+                  placeholder="e.g. Beats Lounge, Room 101"
                   value={hostelName}
                   onChange={(e) => setHostelName(e.target.value)}
                   autoFocus
@@ -122,7 +122,7 @@ export function CreateHostelModal({
                       <span>Generating space...</span>
                     </>
                   ) : (
-                    <span>Create Hostel</span>
+                    <span>Create Room</span>
                   )}
                 </button>
               </div>
@@ -130,12 +130,12 @@ export function CreateHostelModal({
           </div>
         ) : (
           <div className="text-center py-2 animate-in fade-in duration-200">
-            <p className="text-xs text-neutral-400 mb-2">Your HostelSync code</p>
+            <p className="text-xs text-neutral-400 mb-2">Your Room code</p>
             <div className="inline-block bg-neutral-950 border border-neutral-800 px-5 py-2.5 rounded-lg font-mono text-2xl font-bold tracking-widest text-white mb-2 shadow-inner">
               {createdCode}
             </div>
             <p className="text-xs text-neutral-400 mb-5">
-              Share this code with your residents to let them enter.
+              Share this code with friends to let them join.
             </p>
 
             <div className="flex flex-col gap-2.5">
@@ -166,7 +166,7 @@ export function CreateHostelModal({
                 }}
                 className="w-full py-2 px-4 bg-white text-black hover:bg-neutral-200 rounded-md text-xs font-medium transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm"
               >
-                <span>Enter Hostel</span>
+                <span>Join Room</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
             </div>

@@ -323,18 +323,22 @@ export class RoomSync {
       return;
     }
 
-    // Deduplicate identical events received across multiple transports (local/webrtc/server)
-    const eventKey =
-      (event as any).id ||
-      `${event.type}_${(event as any).sentAt || (event as any).serverTimestamp || (event as any).currentTime || ''}_${(event as any).trackId || (event as any).peerId || ''}`;
-    if (eventKey && this.processedEventIds.has(eventKey)) {
-      return;
-    }
-    if (eventKey) {
-      this.processedEventIds.add(eventKey);
-      if (this.processedEventIds.size > 200) {
-        const first = this.processedEventIds.values().next().value;
-        if (first) this.processedEventIds.delete(first);
+    // Deduplicate non-heartbeat events received across multiple transports (local/webrtc/server)
+    // Never deduplicate PEER_PING or PEER_PONG because they keep the presence heartbeat active!
+    const isHeartbeat = event.type === 'PEER_PING' || event.type === 'PEER_PONG';
+    if (!isHeartbeat) {
+      const eventKey =
+        (event as any).id ||
+        `${event.type}_${(event as any).sentAt || (event as any).serverTimestamp || (event as any).currentTime || ''}_${(event as any).trackId || (event as any).peerId || ''}`;
+      if (eventKey && this.processedEventIds.has(eventKey)) {
+        return;
+      }
+      if (eventKey) {
+        this.processedEventIds.add(eventKey);
+        if (this.processedEventIds.size > 200) {
+          const first = this.processedEventIds.values().next().value;
+          if (first) this.processedEventIds.delete(first);
+        }
       }
     }
 

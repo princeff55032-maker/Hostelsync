@@ -240,7 +240,7 @@ export function CodeInput({ onJoin, findHostel }: CodeInputProps) {
             }}
             className="w-full mt-3 py-2.5 px-4 bg-white text-black hover:bg-neutral-200 active:bg-neutral-300 rounded-md font-medium text-xs tracking-wide transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-[0.99] select-none"
           >
-            <span>Enter Hostel</span>
+            <span>Join Room</span>
             <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>

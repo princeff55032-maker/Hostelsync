@@ -22,10 +22,9 @@ const globalForSync = globalThis as unknown as {
 const roomPeers = globalForSync.roomPeers ?? new Map<string, Map<string, ActivePeer>>();
 const roomEvents = globalForSync.roomEvents ?? new Map<string, StoredEvent[]>();
 
-if (process.env.NODE_ENV !== 'production') {
-  globalForSync.roomPeers = roomPeers;
-  globalForSync.roomEvents = roomEvents;
-}
+// CRITICAL: Bind to globalThis unconditionally so warm containers in production share peers
+globalForSync.roomPeers = roomPeers;
+globalForSync.roomEvents = roomEvents;
 
 function normalizeCode(raw: string): string {
   const cleanSuffix = (raw || '').trim().toUpperCase().replace(/^HS-/, '');
@@ -38,8 +37,8 @@ function getActivePeers(code: string): ActivePeer[] {
   const now = Date.now();
   const alive: ActivePeer[] = [];
   for (const [id, peer] of peersMap.entries()) {
-    // 15-second heartbeat window
-    if (now - peer.lastSeen < 15000) {
+    // 45-second heartbeat window (prevents premature disconnection on mobile backgrounding/network delay)
+    if (now - peer.lastSeen < 45000) {
       alive.push(peer);
     } else {
       peersMap.delete(id);

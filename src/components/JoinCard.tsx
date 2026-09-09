@@ -35,12 +35,12 @@ export function JoinCard({
 
         {/* Main Heading */}
         <h2 className="text-base sm:text-lg font-medium tracking-tight mb-1 text-white">
-          Join a HostelSync
+          Join Room
         </h2>
 
         {/* Subheading */}
         <p className="text-neutral-400 mb-5 text-center text-xs">
-          Enter a hostel code to join or create a new hostel
+          Enter a room code to join or create a new room
         </p>
 
         {/* Primary Code Input */}
@@ -62,7 +62,7 @@ export function JoinCard({
             </div>
           </div>
 
-          {/* Secondary Action: Create new hostel */}
+          {/* Secondary Action: Create Room */}
           <div className="flex flex-col gap-3 mt-4">
             <button
               type="button"
@@ -70,7 +70,7 @@ export function JoinCard({
               className="px-5 py-3 min-h-[44px] bg-white text-black hover:bg-neutral-200 rounded-full font-medium text-xs tracking-wide cursor-pointer w-full transition-colors flex items-center justify-center gap-2 shadow-xs active:scale-[0.99]"
             >
               <PlusCircle className="w-4 h-4 text-black" />
-              <span>Create new hostel</span>
+              <span>Create Room</span>
             </button>
           </div>
         </div>

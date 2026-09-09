@@ -335,6 +335,15 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
     const sync = new RoomSync(hostel.code, effectiveUserName, isRoomHost);
     syncRef.current = sync;
 
+    // Ensure room is registered on server and cloud KV for other devices
+    if (isRoomHost) {
+      fetch('/api/rooms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room: hostel }),
+      }).catch(() => {});
+    }
+
     sync.setEventHandler((event: SyncEvent) => {
       handleRemoteSyncEventRef.current(event);
     });
@@ -415,10 +424,10 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
         });
       }
 
-      // Clean up stale peers older than 25 seconds (prevents mobile background timer throttling from dropping peers)
+      // Clean up stale peers older than 45 seconds (prevents mobile background timer throttling from dropping peers)
       const now = performance.now();
       setConnectedPeers((prev) => {
-        const alive = prev.filter((p) => now - p.lastSeen < 25000);
+        const alive = prev.filter((p) => now - p.lastSeen < 45000);
         connectedPeersRef.current = alive;
         return alive;
       });
