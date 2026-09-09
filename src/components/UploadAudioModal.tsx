@@ -256,30 +256,30 @@ export function UploadAudioModal({
         )}
 
         {/* Tab Navigation */}
-        <div className="grid grid-cols-2 p-1 bg-neutral-950 border border-neutral-800 rounded-lg text-xs mb-4">
+        <div className="grid grid-cols-2 p-1 bg-neutral-950 border border-neutral-800 rounded-xl text-xs mb-4">
           <button
             type="button"
             onClick={() => setActiveTab('device')}
-            className={`py-1.5 rounded-md font-medium transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
+            className={`py-2 px-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-1.5 cursor-pointer text-[11px] sm:text-xs ${
               activeTab === 'device'
                 ? 'bg-neutral-800 text-white shadow-xs'
                 : 'text-neutral-400 hover:text-white'
             }`}
           >
-            <Upload className="w-3.5 h-3.5" />
-            <span>Direct Device Upload</span>
+            <Upload className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">Device Upload</span>
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('link')}
-            className={`py-1.5 rounded-md font-medium transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
+            className={`py-2 px-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-1.5 cursor-pointer text-[11px] sm:text-xs ${
               activeTab === 'link'
                 ? 'bg-neutral-800 text-white shadow-xs'
                 : 'text-neutral-400 hover:text-white'
             }`}
           >
-            <LinkIcon className="w-3.5 h-3.5" />
-            <span>YouTube / Web Link</span>
+            <LinkIcon className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">YouTube / Web</span>
           </button>
         </div>
 
@@ -381,21 +381,21 @@ export function UploadAudioModal({
               </div>
             )}
 
-            <div className="flex justify-end gap-2 pt-2 border-t border-neutral-800">
+            <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-3 border-t border-neutral-800">
               <button
                 type="button"
                 onClick={handleClose}
-                className="px-3.5 py-1.5 bg-neutral-800 hover:bg-neutral-750 text-neutral-300 rounded-md transition-colors"
+                className="w-full sm:w-auto px-4 py-2.5 min-h-[40px] bg-neutral-800 hover:bg-neutral-750 text-neutral-300 rounded-lg transition-colors flex items-center justify-center cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={!selectedFile || !canAddMusic}
-                className={`px-4 py-1.5 font-medium rounded-md transition-colors ${
+                className={`w-full sm:w-auto px-5 py-2.5 min-h-[40px] font-medium rounded-lg transition-colors flex items-center justify-center ${
                   !selectedFile || !canAddMusic
                     ? 'bg-neutral-800 text-neutral-500 opacity-50 cursor-not-allowed'
-                    : 'bg-white text-black hover:bg-neutral-200 cursor-pointer'
+                    : 'bg-white text-black hover:bg-neutral-200 cursor-pointer shadow-sm'
                 }`}
               >
                 {!canAddMusic ? 'Upload Locked' : 'Add to Room Queue'}
@@ -467,21 +467,21 @@ export function UploadAudioModal({
             </div>
 
 
-            <div className="flex justify-end gap-2 pt-2 border-t border-neutral-800">
+            <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-3 border-t border-neutral-800">
               <button
                 type="button"
                 onClick={handleClose}
-                className="px-3.5 py-1.5 bg-neutral-800 hover:bg-neutral-750 text-neutral-300 rounded-md transition-colors"
+                className="w-full sm:w-auto px-4 py-2.5 min-h-[40px] bg-neutral-800 hover:bg-neutral-750 text-neutral-300 rounded-lg transition-colors flex items-center justify-center cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={!linkUrl.trim() || !canAddMusic}
-                className={`px-4 py-1.5 font-medium rounded-md transition-colors ${
+                className={`w-full sm:w-auto px-5 py-2.5 min-h-[40px] font-medium rounded-lg transition-colors flex items-center justify-center ${
                   !linkUrl.trim() || !canAddMusic
                     ? 'bg-neutral-800 text-neutral-500 opacity-50 cursor-not-allowed'
-                    : 'bg-white text-black hover:bg-neutral-200 cursor-pointer'
+                    : 'bg-white text-black hover:bg-neutral-200 cursor-pointer shadow-sm'
                 }`}
               >
                 {!canAddMusic ? 'Upload Locked' : 'Add Link to Queue'}

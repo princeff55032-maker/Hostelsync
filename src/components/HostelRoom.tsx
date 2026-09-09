@@ -1399,7 +1399,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
       )}
 
       {/* 1. TOP STATUS BAR (Clean, modern, and uncluttered on mobile) */}
-      <header className="h-10 px-3 sm:px-3.5 bg-[#0d0d0e] border-b border-neutral-800/80 flex items-center justify-between text-[11px] text-neutral-400 shrink-0">
+      <header className="h-11 sm:h-10 px-3 sm:px-3.5 bg-[#0d0d0e] border-b border-neutral-800/80 flex items-center justify-between text-[11px] text-neutral-400 shrink-0">
         {/* Left: Brand + Room Name + Live Indicator */}
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <div className="flex items-center gap-1.5 text-white font-medium shrink-0">
@@ -1470,10 +1470,10 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
               handleLeaveOrRefresh();
               onLeave();
             }}
-            className="flex items-center gap-1 text-[11px] text-neutral-400 hover:text-white px-2 py-0.5 rounded hover:bg-neutral-800 transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 text-xs text-neutral-300 hover:text-white px-2.5 py-1 min-h-[34px] rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer active:scale-95"
             title="Leave Room"
           >
-            <LogOut className="w-3 h-3" />
+            <LogOut className="w-3.5 h-3.5" />
             <span>Leave</span>
           </button>
         </div>
@@ -1513,41 +1513,41 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
       />
 
       {/* Mobile Navigation Tabs (visible only on mobile/tablet < lg) */}
-      <div className="lg:hidden grid grid-cols-3 gap-1 bg-[#101012] border-b border-neutral-800/80 px-2 py-1.5 shrink-0 select-none">
+      <div className="lg:hidden grid grid-cols-3 gap-1.5 bg-[#101012] border-b border-neutral-800/80 px-2.5 py-2 shrink-0 select-none">
         <button
           type="button"
           onClick={() => setMobileTab('music')}
-          className={`py-2 px-1 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
+          className={`min-h-[40px] py-2 px-2 rounded-xl text-xs font-medium flex items-center justify-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer active:scale-95 ${
             mobileTab === 'music'
               ? 'bg-white text-black font-semibold shadow-xs'
               : 'text-neutral-400 hover:text-white hover:bg-neutral-800/50'
           }`}
         >
-          <Disc className="w-3.5 h-3.5 shrink-0" />
+          <Disc className="w-4 h-4 shrink-0" />
           <span className="truncate">Music</span>
         </button>
         <button
           type="button"
           onClick={() => setMobileTab('studio')}
-          className={`py-2 px-1 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
+          className={`min-h-[40px] py-2 px-2 rounded-xl text-xs font-medium flex items-center justify-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer active:scale-95 ${
             mobileTab === 'studio'
               ? 'bg-white text-black font-semibold shadow-xs'
               : 'text-neutral-400 hover:text-white hover:bg-neutral-800/50'
           }`}
         >
-          <SlidersHorizontal className="w-3.5 h-3.5 shrink-0" />
+          <SlidersHorizontal className="w-4 h-4 shrink-0" />
           <span className="truncate">Studio</span>
         </button>
         <button
           type="button"
           onClick={() => setMobileTab('room')}
-          className={`py-2 px-1 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
+          className={`min-h-[40px] py-2 px-2 rounded-xl text-xs font-medium flex items-center justify-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer active:scale-95 ${
             mobileTab === 'room'
               ? 'bg-white text-black font-semibold shadow-xs'
               : 'text-neutral-400 hover:text-white hover:bg-neutral-800/50'
           }`}
         >
-          <Users className="w-3.5 h-3.5 shrink-0" />
+          <Users className="w-4 h-4 shrink-0" />
           <span className="truncate">Room ({totalConnectedCount})</span>
         </button>
       </div>
@@ -1555,7 +1555,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
       {/* 2. THREE-COLUMN MAIN BODY */}
       <div className="flex-1 flex overflow-hidden">
         {/* LEFT SIDEBAR (Room details, permissions, REAL connected users, upload audio button) */}
-        <aside className={`w-full lg:w-72 bg-[#0c0c0d] lg:border-r border-neutral-800/80 flex-col justify-between p-3.5 pb-28 lg:pb-3.5 shrink-0 overflow-y-auto ${
+        <aside className={`w-full lg:w-72 bg-[#0c0c0d] lg:border-r border-neutral-800/80 flex-col justify-between p-3.5 pb-32 lg:pb-3.5 shrink-0 overflow-y-auto ${
           mobileTab === 'room' ? 'flex' : 'hidden lg:flex'
         }`}>
           <div>
@@ -2047,13 +2047,13 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
           mobileTab === 'studio' ? 'flex' : 'hidden lg:flex'
         }`}>
           {/* Top Tabs */}
-          <div className="flex items-center p-2 border-b border-neutral-800/80 gap-1 text-xs shrink-0">
+          <div className="flex items-center p-2 border-b border-neutral-800/80 gap-1.5 text-xs shrink-0">
             <button
               type="button"
               onClick={() => setRightTab('chat')}
-              className={`flex-1 py-1.5 rounded-md font-medium transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
+              className={`flex-1 py-2 min-h-[38px] rounded-lg font-medium transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
                 rightTab === 'chat'
-                  ? 'bg-neutral-800 text-white'
+                  ? 'bg-neutral-800 text-white font-semibold shadow-xs'
                   : 'text-neutral-400 hover:text-white'
               }`}
             >
@@ -2063,14 +2063,14 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
             <button
               type="button"
               onClick={() => setRightTab('spatial')}
-              className={`flex-1 py-1.5 rounded-md font-medium transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
+              className={`flex-1 py-2 min-h-[38px] rounded-lg font-medium transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
                 rightTab === 'spatial'
-                  ? 'bg-neutral-800 text-white'
+                  ? 'bg-neutral-800 text-white font-semibold shadow-xs'
                   : 'text-neutral-400 hover:text-white'
               }`}
             >
               <Compass className="w-3.5 h-3.5" />
-              <span>Spatial</span>
+              <span>Spatial Audio</span>
             </button>
           </div>
 
@@ -2087,7 +2087,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
                 messages.map((m) => (
                   <div
                     key={m.id}
-                    className={`text-xs rounded-lg p-2.5 ${
+                    className={`text-xs rounded-xl p-3 ${
                       m.isSelf
                         ? 'bg-neutral-800 text-white ml-4'
                         : 'bg-neutral-900 border border-neutral-800 text-neutral-200 mr-4'
@@ -2116,21 +2116,21 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
 
           {/* Bottom Chat Input Form */}
           {rightTab === 'chat' && (
-            <form onSubmit={handleSendMessage} className="p-3 border-t border-neutral-800/80 shrink-0">
-              <div className="relative">
+            <form onSubmit={handleSendMessage} className="p-2.5 sm:p-3 border-t border-neutral-800/80 bg-[#0d0d0e] shrink-0">
+              <div className="relative flex items-center">
                 <input
                   type="text"
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
-                  placeholder="Message"
-                  className="w-full bg-neutral-900 border border-neutral-800 focus:border-neutral-700 rounded-lg px-3 py-2 text-xs text-white placeholder:text-neutral-500 outline-none pr-8"
+                  placeholder="Type a message..."
+                  className="w-full bg-neutral-900 border border-neutral-750 focus:border-neutral-500 rounded-xl px-3.5 py-2.5 min-h-[42px] text-xs text-white placeholder:text-neutral-500 outline-none pr-10"
                 />
                 <button
                   type="submit"
                   disabled={!chatInput.trim()}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-white disabled:opacity-30 cursor-pointer"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-white disabled:opacity-30 p-1.5 cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
                 >
-                  <Send className="w-3.5 h-3.5" />
+                  <Send className="w-4 h-4" />
                 </button>
               </div>
             </form>
@@ -2139,26 +2139,28 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
       </div>
 
       {/* 3. BOTTOM AUDIO PLAYER BAR (Real seekable audio timeline, real playback) */}
-      <footer className="h-16 px-3 sm:px-4 bg-[#0a0a0b] border-t border-neutral-800/80 flex flex-col justify-center shrink-0 text-xs select-none relative">
+      <footer className="h-16 px-3 sm:px-4 bg-[#0a0a0b] border-t border-neutral-800/80 flex flex-col justify-center shrink-0 text-xs select-none relative z-30">
         {/* Seekable Progress Bar across top of player */}
         <div
           onClick={canControlPlayback ? handleSeek : undefined}
-          className={`absolute top-0 left-0 w-full h-1 transition-all group ${
+          className={`absolute top-0 left-0 w-full h-2 -translate-y-1 transition-all group cursor-pointer ${
             canControlPlayback
-              ? 'bg-neutral-800 hover:h-2 cursor-pointer'
-              : 'bg-neutral-850 cursor-default'
+              ? 'hover:h-3'
+              : 'cursor-default'
           }`}
           title={canControlPlayback ? 'Click to seek' : 'Seeking locked (Admin only)'}
         >
-          <div
-            className="h-full bg-white group-hover:bg-emerald-400 transition-all relative"
-            style={{
-              width: duration > 0 ? `${(currentTime / duration) * 100}%` : '0%',
-            }}
-          >
-            {canControlPlayback && (
-              <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-white opacity-0 group-hover:opacity-100 shadow" />
-            )}
+          <div className="w-full h-1 bg-neutral-800 relative">
+            <div
+              className="h-full bg-white group-hover:bg-emerald-400 transition-all relative"
+              style={{
+                width: duration > 0 ? `${(currentTime / duration) * 100}%` : '0%',
+              }}
+            >
+              {canControlPlayback && (
+                <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-white opacity-0 group-hover:opacity-100 shadow" />
+              )}
+            </div>
           </div>
         </div>
 
@@ -2221,7 +2223,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
             </div>
 
             {/* Mobile now playing info */}
-            <div className="flex sm:hidden items-center gap-2 min-w-0 max-w-[130px]">
+            <div className="flex sm:hidden items-center gap-2 min-w-0 max-w-[120px] xs:max-w-[150px]">
               <div className="w-8 h-8 rounded-lg bg-neutral-900 border border-neutral-800 flex items-center justify-center shrink-0">
                 {isPlaying ? (
                   <Radio className="w-4 h-4 text-emerald-400 animate-pulse" />
@@ -2230,10 +2232,10 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
                 )}
               </div>
               <div className="min-w-0 truncate">
-                <div className="text-[11px] font-semibold text-white truncate">
+                <div className="text-[11px] font-semibold text-white truncate leading-tight">
                   {activeTrack?.title || 'No track'}
                 </div>
-                <div className="text-[9px] text-neutral-400 truncate">
+                <div className="text-[9px] text-neutral-400 truncate leading-tight mt-0.5">
                   {activeTrack?.artist || 'HostelSync'}
                 </div>
               </div>
@@ -2258,9 +2260,9 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
                 type="button"
                 onClick={handlePrevTrack}
                 disabled={!canControlPlayback}
-                className={`transition-colors p-1 ${
+                className={`transition-colors p-2 min-h-[38px] min-w-[38px] flex items-center justify-center rounded-lg ${
                   canControlPlayback
-                    ? 'text-neutral-400 hover:text-white cursor-pointer'
+                    ? 'text-neutral-400 hover:text-white hover:bg-neutral-800/60 cursor-pointer active:scale-95'
                     : 'text-neutral-600 cursor-not-allowed opacity-50'
                 }`}
                 title={canControlPlayback ? 'Previous' : 'Only Admins can control playback'}
@@ -2268,12 +2270,12 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
                 <SkipBack className="w-4 h-4" />
               </button>
 
-              {/* Main Circular Play/Pause (Real audio trigger) */}
+              {/* Main Circular Play/Pause (Real audio trigger with accessible touch target) */}
               <button
                 type="button"
                 onClick={togglePlay}
                 disabled={!canControlPlayback}
-                className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center transition-all shadow-xs active:scale-95 ${
+                className={`w-10 h-10 sm:w-9 sm:h-9 rounded-full flex items-center justify-center transition-all shadow-md active:scale-95 ${
                   canControlPlayback
                     ? 'bg-white text-black hover:bg-neutral-200 cursor-pointer'
                     : 'bg-neutral-800 text-neutral-500 cursor-not-allowed opacity-50'
@@ -2291,9 +2293,9 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
                 type="button"
                 onClick={handleNextTrack}
                 disabled={!canControlPlayback}
-                className={`transition-colors p-1 ${
+                className={`transition-colors p-2 min-h-[38px] min-w-[38px] flex items-center justify-center rounded-lg ${
                   canControlPlayback
-                    ? 'text-neutral-400 hover:text-white cursor-pointer'
+                    ? 'text-neutral-400 hover:text-white hover:bg-neutral-800/60 cursor-pointer active:scale-95'
                     : 'text-neutral-600 cursor-not-allowed opacity-50'
                 }`}
                 title={canControlPlayback ? 'Next' : 'Only Admins can control playback'}
@@ -2322,12 +2324,12 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
             </div>
           </div>
 
-          {/* Right: Volume Slider & Mute Toggle */}
+          {/* Right: Volume Slider & Mute Toggle with accessible mobile tap area */}
           <div className="flex items-center justify-end gap-2 sm:w-48 shrink-0">
             <button
               type="button"
               onClick={() => setIsMuted(!isMuted)}
-              className="text-neutral-400 hover:text-white p-1 rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer"
+              className="text-neutral-400 hover:text-white p-2 min-h-[40px] min-w-[40px] flex items-center justify-center rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer active:scale-95"
               title={isMuted ? 'Unmute' : 'Mute'}
             >
               {isMuted || volume === 0 ? (
@@ -2345,7 +2347,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
                 setVolume(parseInt(e.target.value, 10));
                 if (isMuted) setIsMuted(false);
               }}
-              className="hidden sm:block w-24 h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-white"
+              className="hidden sm:block w-24 h-1.5 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-white"
             />
           </div>
         </div>

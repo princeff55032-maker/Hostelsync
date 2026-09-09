@@ -26,15 +26,15 @@ export function JoinCard({
   onOpenAbout,
 }: JoinCardProps) {
   return (
-    <div className="w-full px-3 sm:px-1 max-w-[28rem] mx-auto mt-6 sm:mt-16 lg:mt-24 animate-in fade-in duration-200">
-      <div className="flex flex-col items-center justify-center p-6 sm:p-7 bg-neutral-900 rounded-xl border border-neutral-800 shadow-2xl mx-auto">
+    <div className="w-full px-3 sm:px-4 max-w-[28rem] mx-auto my-auto py-6 sm:py-12 animate-in fade-in duration-200">
+      <div className="flex flex-col items-center justify-center p-5 sm:p-7 bg-neutral-900 rounded-2xl border border-neutral-800 shadow-2xl mx-auto">
         {/* Brand Logo */}
         <div className="mb-4">
           <HostelSyncLogo size="md" />
         </div>
 
         {/* Main Heading */}
-        <h2 className="text-base font-medium tracking-tight mb-1 text-white">
+        <h2 className="text-base sm:text-lg font-medium tracking-tight mb-1 text-white">
           Join a HostelSync
         </h2>
 
@@ -49,8 +49,8 @@ export function JoinCard({
 
           {/* Your Name Input (No default name) */}
           <div className="w-full mt-3.5">
-            <div className="flex items-center gap-2 bg-neutral-950/70 border border-neutral-800 focus-within:border-neutral-700 rounded-lg px-3 py-2 transition-colors">
-              <User className="w-3.5 h-3.5 text-neutral-500 shrink-0" />
+            <div className="flex items-center gap-2 bg-neutral-950/70 border border-neutral-800 focus-within:border-neutral-600 rounded-xl px-3 py-2.5 min-h-[44px] transition-colors">
+              <User className="w-4 h-4 text-neutral-500 shrink-0" />
               <input
                 type="text"
                 placeholder="Your name (e.g. Alex)"
@@ -67,7 +67,7 @@ export function JoinCard({
             <button
               type="button"
               onClick={onOpenCreate}
-              className="px-5 py-2.5 bg-white text-black hover:bg-neutral-200 rounded-full font-medium text-xs tracking-wide cursor-pointer w-full transition-colors flex items-center justify-center gap-2 shadow-xs active:scale-[0.99]"
+              className="px-5 py-3 min-h-[44px] bg-white text-black hover:bg-neutral-200 rounded-full font-medium text-xs tracking-wide cursor-pointer w-full transition-colors flex items-center justify-center gap-2 shadow-xs active:scale-[0.99]"
             >
               <PlusCircle className="w-4 h-4 text-black" />
               <span>Create new hostel</span>

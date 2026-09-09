@@ -304,9 +304,9 @@ export function SpatialAudioTab({
   }, [isRotating]);
 
   return (
-    <div className="p-4 flex flex-col space-y-4 text-xs select-none pb-28 lg:pb-10">
+    <div className="p-3.5 sm:p-4 flex flex-col space-y-4 text-xs select-none pb-32 lg:pb-12">
       {/* 1. Spatial Audio Header & Switch */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between min-h-[40px]">
         <div className="flex items-center gap-2">
           <Compass className="w-4 h-4 text-white" />
           <span className="font-semibold text-white text-sm">Spatial Audio</span>
@@ -316,7 +316,7 @@ export function SpatialAudioTab({
         <button
           type="button"
           onClick={() => setIsSpatialEnabled((prev) => !prev)}
-          className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer p-0.5 border ${
+          className={`w-12 h-7 rounded-full transition-colors relative cursor-pointer p-0.5 border flex items-center ${
             isSpatialEnabled
               ? 'bg-emerald-500 border-emerald-400 shadow-sm shadow-emerald-500/20'
               : 'bg-neutral-800 border-neutral-700'
@@ -324,10 +324,10 @@ export function SpatialAudioTab({
           title={isSpatialEnabled ? 'Disable Spatial Audio' : 'Enable Spatial Audio'}
         >
           <div
-            className={`w-4.5 h-4.5 rounded-full shadow-md transition-transform duration-200 ${
+            className={`w-5 h-5 rounded-full shadow-md transition-transform duration-200 ${
               isSpatialEnabled
                 ? 'translate-x-5 bg-white'
-                : 'translate-x-0 bg-neutral-400'
+                : 'translate-x-0.5 bg-neutral-400'
             }`}
           />
         </button>
@@ -374,6 +374,7 @@ export function SpatialAudioTab({
           style={{
             left: `${speakerPos.x}%`,
             top: `${speakerPos.y}%`,
+            touchAction: 'none',
           }}
           title="Speaker / Host Origin (Drag to move)"
         >
@@ -397,10 +398,11 @@ export function SpatialAudioTab({
           style={{
             left: `${listenerPos.x}%`,
             top: `${listenerPos.y}%`,
+            touchAction: 'none',
           }}
           title="Listening Source (Drag to hear distance and pan changes)"
         >
-          <div className="w-9 h-9 rounded-full bg-emerald-950 border-2 border-emerald-400 flex items-center justify-center text-emerald-400 shadow-xl shadow-emerald-950/80">
+          <div className="w-10 h-10 rounded-full bg-emerald-950 border-2 border-emerald-400 flex items-center justify-center text-emerald-400 shadow-xl shadow-emerald-950/80">
             <Headphones className="w-4 h-4" />
           </div>
         </div>
@@ -412,7 +414,7 @@ export function SpatialAudioTab({
           <span className="font-mono text-xs text-neutral-300 min-w-[36px]">
             {isSpatialEnabled ? `${spatialVolumePercent}%` : '100%'}
           </span>
-          <div className="flex-1 h-1.5 bg-neutral-850 rounded-full overflow-hidden">
+          <div className="flex-1 h-2 bg-neutral-850 rounded-full overflow-hidden">
             <div
               className="h-full bg-emerald-500 transition-all duration-100"
               style={{
@@ -425,7 +427,7 @@ export function SpatialAudioTab({
         <button
           type="button"
           onClick={handleMoveToTop}
-          className="px-3 py-1.5 bg-neutral-850 hover:bg-neutral-750 text-white font-medium text-[11px] rounded-lg border border-neutral-750 transition-colors flex items-center gap-1.5 cursor-pointer shrink-0"
+          className="px-3.5 py-2 min-h-[38px] bg-neutral-850 hover:bg-neutral-750 text-white font-medium text-xs rounded-xl border border-neutral-750 transition-colors flex items-center gap-1.5 cursor-pointer shrink-0 active:scale-95"
         >
           <ArrowUp className="w-3.5 h-3.5" />
           <span>Move to Top</span>
@@ -548,7 +550,7 @@ export function SpatialAudioTab({
         </div>
 
         {/* Filter Preset Buttons - Zero Emojis, Pure Lucide Vector Icons */}
-        <div className="grid grid-cols-3 gap-1.5">
+        <div className="grid grid-cols-3 gap-2">
           {FILTER_PRESETS.map((p) => {
             const isSel = activePreset === p.id;
             return (
@@ -556,7 +558,7 @@ export function SpatialAudioTab({
                 key={p.id}
                 type="button"
                 onClick={() => applyPreset(p)}
-                className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col gap-1.5 ${
+                className={`p-2.5 sm:p-3 min-h-[62px] rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-1.5 active:scale-95 ${
                   isSel
                     ? 'bg-neutral-800 border-emerald-500/80 text-white shadow-xs'
                     : 'bg-neutral-950/60 border-neutral-800/80 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-850'
@@ -591,9 +593,9 @@ export function SpatialAudioTab({
         </div>
 
         {/* Bass & Treble Equalizer */}
-        <div className="space-y-2.5 pt-2 border-t border-neutral-800/60">
+        <div className="space-y-3 pt-2.5 border-t border-neutral-800/60">
           {/* Bass Shelf */}
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             <div className="flex items-center justify-between text-neutral-300 text-[11px]">
               <span>Bass EQ</span>
               <span className="font-mono text-[10px] text-neutral-400">
@@ -610,12 +612,12 @@ export function SpatialAudioTab({
                 setActivePreset('custom');
                 setBassGain(parseInt(e.target.value, 10));
               }}
-              className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+              className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
             />
           </div>
 
           {/* Treble Shelf */}
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             <div className="flex items-center justify-between text-neutral-300 text-[11px]">
               <span>Treble EQ</span>
               <span className="font-mono text-[10px] text-neutral-400">
@@ -632,7 +634,7 @@ export function SpatialAudioTab({
                 setActivePreset('custom');
                 setTrebleGain(parseInt(e.target.value, 10));
               }}
-              className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+              className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
             />
           </div>
         </div>

@@ -13,18 +13,18 @@ export function Footer({ onOpenAbout }: FooterProps) {
     <div className="w-full flex flex-col items-center">
       <div className="w-full h-px bg-neutral-800 my-4" />
 
-      <div className="flex items-center justify-center gap-3 sm:gap-4 text-neutral-400 text-xs">
-        <span className="flex items-center gap-1.5 text-neutral-400 hover:text-white transition-colors">
+      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-neutral-400 text-xs">
+        <span className="flex items-center gap-1.5 text-neutral-400 hover:text-white transition-colors py-1">
           <HostelSyncLogo size="sm" />
         </span>
 
-        <div className="w-px h-3.5 bg-neutral-700" />
+        <span className="text-neutral-700 hidden sm:inline">•</span>
 
         <a
           href="https://discord.gg"
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center gap-1.5 text-neutral-400 hover:text-white transition-colors"
+          className="flex items-center gap-1.5 text-neutral-400 hover:text-white transition-colors py-1 px-1 min-h-[32px]"
         >
           <svg
             className="w-3.5 h-3.5"
@@ -37,13 +37,13 @@ export function Footer({ onOpenAbout }: FooterProps) {
           <span>Community</span>
         </a>
 
-        <div className="w-px h-3.5 bg-neutral-700" />
+        <span className="text-neutral-700 hidden sm:inline">•</span>
 
         <a
           href="https://github.com"
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center gap-1.5 text-neutral-400 hover:text-white transition-colors"
+          className="flex items-center gap-1.5 text-neutral-400 hover:text-white transition-colors py-1 px-1 min-h-[32px]"
         >
           <svg
             className="w-3.5 h-3.5"
@@ -60,12 +60,12 @@ export function Footer({ onOpenAbout }: FooterProps) {
           <span>GitHub</span>
         </a>
 
-        <div className="w-px h-3.5 bg-neutral-700" />
+        <span className="text-neutral-700 hidden sm:inline">•</span>
 
         <button
           type="button"
           onClick={onOpenAbout}
-          className="flex items-center gap-1.5 text-neutral-400 hover:text-white transition-colors cursor-pointer"
+          className="flex items-center gap-1.5 text-neutral-400 hover:text-white transition-colors cursor-pointer py-1 px-1 min-h-[32px]"
         >
           <Info className="w-3.5 h-3.5" />
           <span>About</span>
