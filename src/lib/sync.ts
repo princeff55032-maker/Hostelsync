@@ -47,6 +47,20 @@ export type SyncEvent =
   | {
       type: 'ROOM_DELETED';
       roomCode: string;
+      reason?: string;
+    }
+  | {
+      type: 'PEER_KICKED';
+      targetPeerId: string;
+      memberName?: string;
+    }
+  | {
+      type: 'ROOM_NAME_UPDATED';
+      newName: string;
+    }
+  | {
+      type: 'ROOM_LOCK_UPDATED';
+      isLocked: boolean;
     }
   | {
       type: 'REQUEST_ROOM_STATE';
@@ -63,6 +77,8 @@ export type SyncEvent =
       playbackPermission: 'everyone' | 'admins';
       addMusicPermission: 'everyone' | 'admins';
       adminPeerIds: string[];
+      roomName?: string;
+      isLocked?: boolean;
     };
 
 export class RoomSync {

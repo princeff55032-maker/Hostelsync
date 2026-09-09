@@ -18,7 +18,7 @@ function normalizeCode(raw: string): string {
   return cleanSuffix.length === 4 ? `HS-${cleanSuffix}` : (raw || '').trim().toUpperCase();
 }
 
-function buildRoomFromMini(code: string, mini: { n?: string; c?: string }): Hostel {
+function buildRoomFromMini(code: string, mini: { n?: string; c?: string; lk?: boolean }): Hostel {
   const spaceName = mini.n || `Space #${code.replace('HS-', '')}`;
   const creatorName = mini.c || 'Admin';
 
@@ -29,6 +29,7 @@ function buildRoomFromMini(code: string, mini: { n?: string; c?: string }): Host
     totalRooms: 40,
     address: 'Hostel Campus, Wing A',
     warden: creatorName,
+    isLocked: Boolean(mini.lk),
     residents: [
       { id: 'creator', name: creatorName, room: '101', status: 'In room', floor: 1, isUser: false },
     ],
@@ -132,7 +133,11 @@ export async function POST(request: Request) {
 
     // Also persist mini metadata to cloud KV so any Vercel instance/device can find it
     try {
-      const mini = { n: normalizedRoom.name, c: normalizedRoom.warden || 'Admin' };
+      const mini = {
+        n: normalizedRoom.name,
+        c: normalizedRoom.warden || 'Admin',
+        lk: Boolean(normalizedRoom.isLocked),
+      };
       const b64 = Buffer.from(JSON.stringify(mini)).toString('base64url');
       fetch(
         `https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/${CLOUD_APP_KEY}/${encodeURIComponent(code)}/${b64}`,

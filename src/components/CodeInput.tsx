@@ -45,8 +45,18 @@ export function CodeInput({ onJoin, findHostel }: CodeInputProps) {
           if (isCancelled) return;
           setIsValidating(false);
           if (found) {
-            setMatchedHostel(found);
-            setErrorMessage(null);
+            const isCreator =
+              typeof window !== 'undefined' &&
+              (sessionStorage.getItem(`hostelsync_creator_${cleanCode}`) === 'true' ||
+                localStorage.getItem(`hostelsync_creator_${cleanCode}`) === 'true');
+
+            if (found.isLocked && !isCreator) {
+              setMatchedHostel(null);
+              setErrorMessage('🔒 This room is locked by the creator');
+            } else {
+              setMatchedHostel(found);
+              setErrorMessage(null);
+            }
           } else {
             setMatchedHostel(null);
             setErrorMessage(`No rooms found for ${cleanCode}`);
@@ -94,6 +104,14 @@ export function CodeInput({ onJoin, findHostel }: CodeInputProps) {
     const code = suffix.length === 4 ? `HS-${suffix}` : (raw.startsWith('HS-') ? raw : `HS-${raw}`);
 
     if (matchedHostel && matchedHostel.code === code) {
+      const isCreator =
+        typeof window !== 'undefined' &&
+        (sessionStorage.getItem(`hostelsync_creator_${code}`) === 'true' ||
+          localStorage.getItem(`hostelsync_creator_${code}`) === 'true');
+      if (matchedHostel.isLocked && !isCreator) {
+        setErrorMessage('🔒 This room is locked by the creator');
+        return;
+      }
       hiddenInputRef.current?.blur();
       audioEngine.unlockAudio();
       onJoin(code);
@@ -105,6 +123,15 @@ export function CodeInput({ onJoin, findHostel }: CodeInputProps) {
       const found = await Promise.resolve(findHostel(code));
       setIsValidating(false);
       if (found) {
+        const isCreator =
+          typeof window !== 'undefined' &&
+          (sessionStorage.getItem(`hostelsync_creator_${code}`) === 'true' ||
+            localStorage.getItem(`hostelsync_creator_${code}`) === 'true');
+        if (found.isLocked && !isCreator) {
+          setMatchedHostel(null);
+          setErrorMessage('🔒 This room is locked by the creator');
+          return;
+        }
         setMatchedHostel(found);
         hiddenInputRef.current?.blur();
         audioEngine.unlockAudio();

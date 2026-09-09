@@ -72,6 +72,7 @@ export interface Hostel {
   totalRooms: number;
   address: string;
   warden: string;
+  isLocked?: boolean;
   residents: Resident[];
   rooms: HostelRoomItem[];
   announcements: Announcement[];

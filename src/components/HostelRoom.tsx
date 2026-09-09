@@ -31,6 +31,10 @@ import {
   Film,
   Laptop,
   Lock,
+  Unlock,
+  Pencil,
+  UserMinus,
+  Power,
   Shield,
   Disc,
   SlidersHorizontal,
@@ -94,6 +98,18 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
   const [promotedToAdmin, setPromotedToAdmin] = useState<boolean>(false);
   const [mobileTab, setMobileTab] = useState<'music' | 'studio' | 'room'>('music');
 
+  // Room Name state
+  const [currentRoomName, setCurrentRoomName] = useState<string>(hostel.name || 'Room');
+  const [isEditingRoomName, setIsEditingRoomName] = useState<boolean>(false);
+  const [editedRoomName, setEditedRoomName] = useState<string>(hostel.name || 'Room');
+
+  // Room Lock state
+  const [isRoomLocked, setIsRoomLocked] = useState<boolean>(Boolean(hostel.isLocked));
+
+  // Kicked / Closed notices
+  const [kickedNotice, setKickedNotice] = useState<string | null>(null);
+  const [closedNotice, setClosedNotice] = useState<string | null>(null);
+
   const effectiveUserName = userName?.trim() || 'Resident';
 
   // True room host & Admin detection
@@ -117,12 +133,16 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
   const playbackPermissionRef = useRef<'everyone' | 'admins'>(playbackPermission);
   const addMusicPermissionRef = useRef<'everyone' | 'admins'>(addMusicPermission);
   const adminPeerIdsRef = useRef<string[]>(adminPeerIds);
+  const currentRoomNameRef = useRef<string>(currentRoomName);
+  const isRoomLockedRef = useRef<boolean>(isRoomLocked);
   const handleRemoteSyncEventRef = useRef<(event: SyncEvent) => void>(() => {});
 
   isUserAdminRef.current = isUserAdmin;
   playbackPermissionRef.current = playbackPermission;
   addMusicPermissionRef.current = addMusicPermission;
   adminPeerIdsRef.current = adminPeerIds;
+  currentRoomNameRef.current = currentRoomName;
+  isRoomLockedRef.current = isRoomLocked;
 
   const canControlPlayback = playbackPermission === 'everyone' || isUserAdmin;
   const canAddMusic = addMusicPermission === 'everyone' || isUserAdmin;
@@ -220,56 +240,195 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
     }
   };
 
-  // Instant Admin Transfer / Instant Room Deletion on Browser Refresh or Leave
+  // 1. Change Room Name (Creator Only)
+  const handleSaveRoomName = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!isRoomHost) return;
+    const cleanName = editedRoomName.trim();
+    if (!cleanName) return;
+
+    setCurrentRoomName(cleanName);
+    setIsEditingRoomName(false);
+    hostel.name = cleanName;
+
+    if (syncRef.current) {
+      syncRef.current.broadcast({
+        type: 'ROOM_NAME_UPDATED',
+        newName: cleanName,
+      });
+
+      const chatNotification: ChatMessage = {
+        id: `msg-name-${Date.now()}`,
+        sender: 'HostelSync',
+        text: `✏️ Room name was changed to "${cleanName}" by the creator.`,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isSelf: false,
+      };
+      setMessages((prev) => [...prev, chatNotification]);
+      syncRef.current.broadcast({
+        type: 'CHAT_MESSAGE',
+        message: chatNotification,
+      });
+    }
+
+    try {
+      fetch('/api/rooms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room: { ...hostel, name: cleanName } }),
+      }).catch(() => {});
+    } catch {}
+  };
+
+  // 2. Lock / Unlock Room (Creator Only)
+  const handleToggleRoomLock = () => {
+    if (!isRoomHost) return;
+    const nextLocked = !isRoomLocked;
+    setIsRoomLocked(nextLocked);
+    hostel.isLocked = nextLocked;
+
+    if (syncRef.current) {
+      syncRef.current.broadcast({
+        type: 'ROOM_LOCK_UPDATED',
+        isLocked: nextLocked,
+      });
+
+      const chatNotification: ChatMessage = {
+        id: `msg-lock-${Date.now()}`,
+        sender: 'HostelSync',
+        text: nextLocked
+          ? '🔒 Room has been locked by the creator. New participants cannot join.'
+          : '🔓 Room has been unlocked by the creator. Anyone with the code can join.',
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isSelf: false,
+      };
+      setMessages((prev) => [...prev, chatNotification]);
+      syncRef.current.broadcast({
+        type: 'CHAT_MESSAGE',
+        message: chatNotification,
+      });
+    }
+
+    try {
+      fetch('/api/rooms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room: { ...hostel, isLocked: nextLocked } }),
+      }).catch(() => {});
+    } catch {}
+  };
+
+  // 3. Remove Participant / Kick (Creator Only)
+  const handleKickParticipant = (peerId: string, peerName: string) => {
+    if (!isRoomHost) return;
+    if (typeof window !== 'undefined' && !window.confirm(`Remove "${peerName}" from the room?`)) {
+      return;
+    }
+
+    setConnectedPeers((prev) => prev.filter((p) => p.id !== peerId));
+    connectedPeersRef.current = connectedPeersRef.current.filter((p) => p.id !== peerId);
+
+    if (syncRef.current) {
+      syncRef.current.broadcast({
+        type: 'PEER_KICKED',
+        targetPeerId: peerId,
+        memberName: peerName,
+      });
+
+      const chatNotification: ChatMessage = {
+        id: `msg-kick-${Date.now()}`,
+        sender: 'HostelSync',
+        text: `🚫 ${peerName} was removed from the room by the creator.`,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isSelf: false,
+      };
+      setMessages((prev) => [...prev, chatNotification]);
+      syncRef.current.broadcast({
+        type: 'CHAT_MESSAGE',
+        message: chatNotification,
+      });
+    }
+
+    try {
+      fetch('/api/rooms/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: hostel.code,
+          peerId,
+          action: 'leave',
+        }),
+      }).catch(() => {});
+    } catch {}
+  };
+
+  // 4. Close Room (Creator Only)
+  const handleCloseRoom = () => {
+    if (!isRoomHost) return;
+    if (typeof window !== 'undefined' && !window.confirm('Are you sure you want to close this room? All participants will be disconnected.')) {
+      return;
+    }
+
+    if (syncRef.current) {
+      syncRef.current.broadcast({
+        type: 'ROOM_DELETED',
+        roomCode: hostel.code,
+        reason: 'The room was closed by the creator.',
+      });
+    }
+
+    try {
+      sessionStorage.removeItem(`hostelsync_creator_${hostel.code}`);
+      localStorage.removeItem(`hostelsync_creator_${hostel.code}`);
+      localStorage.removeItem('hostelsync_active_code_v1');
+    } catch {}
+
+    try {
+      fetch(`/api/rooms?code=${encodeURIComponent(hostel.code)}`, {
+        method: 'DELETE',
+      }).catch(() => {});
+    } catch {}
+
+    if (onDeleteRoom) {
+      onDeleteRoom();
+    } else {
+      onLeave();
+    }
+  };
+
+  // User leaves or refreshes: announce leave, do NOT delete room so other members can join anytime
   const handleLeaveOrRefresh = useCallback(() => {
     const peers = connectedPeersRef.current;
     const amAdmin = isUserAdminRef.current;
 
-    if (amAdmin) {
-      if (peers.length > 0) {
-        // Members are present: transfer admin instantly to the next member in the room
-        const nextAdmin = peers[0];
-        if (syncRef.current) {
-          syncRef.current.broadcast({
-            type: 'ADMIN_TRANSFER',
-            newAdminPeerId: nextAdmin.id,
-            newAdminName: nextAdmin.name,
-          });
-          syncRef.current.broadcast({
-            type: 'PERMISSIONS_UPDATE',
-            playbackPermission: playbackPermissionRef.current,
-            addMusicPermission: addMusicPermissionRef.current,
-            adminPeerIds: [nextAdmin.id, nextAdmin.name.toLowerCase()],
-          });
-          syncRef.current.broadcast({
-            type: 'PEER_LEAVE',
-            peerId: syncRef.current.peerId,
-          });
-        }
-      } else {
-        // No members present: delete room instantly
-        if (syncRef.current) {
-          syncRef.current.broadcast({
-            type: 'ROOM_DELETED',
-            roomCode: hostel.code,
-          });
-        }
-        onDeleteRoom?.();
-      }
-    } else {
-      if (syncRef.current) {
-        syncRef.current.broadcast({
-          type: 'PEER_LEAVE',
-          peerId: syncRef.current.peerId,
-        });
-      }
+    if (amAdmin && peers.length > 0 && syncRef.current) {
+      // Transfer admin to first remaining peer
+      const nextAdmin = peers[0];
+      syncRef.current.broadcast({
+        type: 'ADMIN_TRANSFER',
+        newAdminPeerId: nextAdmin.id,
+        newAdminName: nextAdmin.name,
+      });
+      syncRef.current.broadcast({
+        type: 'PERMISSIONS_UPDATE',
+        playbackPermission: playbackPermissionRef.current,
+        addMusicPermission: addMusicPermissionRef.current,
+        adminPeerIds: [nextAdmin.id, nextAdmin.name.toLowerCase()],
+      });
+    }
+
+    if (syncRef.current) {
+      syncRef.current.broadcast({
+        type: 'PEER_LEAVE',
+        peerId: syncRef.current.peerId,
+      });
     }
 
     // Always clear active session so refresh lands back on the clean home screen
     try {
       localStorage.removeItem('hostelsync_active_code_v1');
     } catch {}
-  }, [hostel.code, onDeleteRoom]);
+  }, []);
 
   const [rightTab, setRightTab] = useState<'chat' | 'spatial'>('chat');
   const [showQrModal, setShowQrModal] = useState(false);
@@ -549,6 +708,16 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
         setAddMusicPermission(event.addMusicPermission);
         setAdminPeerIds(event.adminPeerIds || []);
 
+        if (event.roomName) {
+          setCurrentRoomName(event.roomName);
+          setEditedRoomName(event.roomName);
+          hostel.name = event.roomName;
+        }
+        if (event.isLocked !== undefined) {
+          setIsRoomLocked(Boolean(event.isLocked));
+          hostel.isLocked = Boolean(event.isLocked);
+        }
+
         if (Array.isArray(event.tracks) && event.tracks.length > 0) {
           setTracks((prev) => {
             return event.tracks.map((rt) => {
@@ -624,6 +793,8 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
             playbackPermission: playbackPermissionRef.current,
             addMusicPermission: addMusicPermissionRef.current,
             adminPeerIds: adminPeerIdsRef.current,
+            roomName: currentRoomNameRef.current,
+            isLocked: isRoomLockedRef.current,
           });
 
           // Also re-send audio buffer if the current track is a local file
@@ -907,6 +1078,44 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
         }
         setTracks([]);
         setIsPlaying(false);
+        break;
+      }
+      case 'PEER_KICKED': {
+        if (event.targetPeerId === syncRef.current?.peerId) {
+          if (audioRef.current) audioRef.current.pause();
+          if (remoteAudioRef.current) remoteAudioRef.current.pause();
+          setIsPlaying(false);
+          setKickedNotice('You have been removed from this room by the creator.');
+          setTimeout(() => {
+            onLeave();
+          }, 2500);
+        } else {
+          setConnectedPeers((prev) => prev.filter((p) => p.id !== event.targetPeerId));
+          connectedPeersRef.current = connectedPeersRef.current.filter((p) => p.id !== event.targetPeerId);
+        }
+        break;
+      }
+      case 'ROOM_DELETED': {
+        if (audioRef.current) audioRef.current.pause();
+        if (remoteAudioRef.current) remoteAudioRef.current.pause();
+        setIsPlaying(false);
+        setClosedNotice(event.reason || 'This room was closed by the creator.');
+        setTimeout(() => {
+          onLeave();
+        }, 2500);
+        break;
+      }
+      case 'ROOM_NAME_UPDATED': {
+        if (event.newName) {
+          setCurrentRoomName(event.newName);
+          setEditedRoomName(event.newName);
+          hostel.name = event.newName;
+        }
+        break;
+      }
+      case 'ROOM_LOCK_UPDATED': {
+        setIsRoomLocked(Boolean(event.isLocked));
+        hostel.isLocked = Boolean(event.isLocked);
         break;
       }
       case 'CHAT_MESSAGE': {
@@ -1491,10 +1700,15 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
           </div>
 
           <div className="flex items-center gap-1.5 font-medium text-white min-w-0">
-            <span className="truncate max-w-[100px] xs:max-w-[140px] sm:max-w-xs">{hostel.name}</span>
+            <span className="truncate max-w-[100px] xs:max-w-[140px] sm:max-w-xs">{currentRoomName}</span>
             <span className="font-mono text-neutral-400 text-[10px] shrink-0">
               #{hostel.code.replace('HS-', '')}
             </span>
+            {isRoomLocked && (
+              <span className="flex items-center gap-0.5 text-[9px] font-mono text-amber-400 bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 rounded-full shrink-0">
+                <Lock className="w-2.5 h-2.5" /> Locked
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-1 text-neutral-400 shrink-0">
@@ -1513,7 +1727,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
           </div>
         </div>
 
-        {/* Right: Social & Leave */}
+        {/* Right: Social & Leave / Close Room */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
           <a
             href="https://discord.gg"
@@ -1543,18 +1757,30 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
             </svg>
           </a>
 
-          <button
-            type="button"
-            onClick={() => {
-              handleLeaveOrRefresh();
-              onLeave();
-            }}
-            className="flex items-center gap-1.5 text-xs text-neutral-300 hover:text-white px-2.5 py-1 min-h-[34px] rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer active:scale-95"
-            title="Leave Room"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>Leave</span>
-          </button>
+          {isRoomHost ? (
+            <button
+              type="button"
+              onClick={handleCloseRoom}
+              className="flex items-center gap-1.5 text-xs text-red-400 hover:text-white px-2.5 py-1 min-h-[34px] rounded-lg bg-red-500/10 hover:bg-red-600 border border-red-500/20 transition-colors cursor-pointer active:scale-95"
+              title="Close Room for all members"
+            >
+              <Power className="w-3.5 h-3.5" />
+              <span>Close room</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                handleLeaveOrRefresh();
+                onLeave();
+              }}
+              className="flex items-center gap-1.5 text-xs text-neutral-300 hover:text-white px-2.5 py-1 min-h-[34px] rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer active:scale-95"
+              title="Leave Room"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Leave</span>
+            </button>
+          )}
         </div>
       </header>
 
@@ -1639,26 +1865,134 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
           mobileTab === 'room' ? 'flex' : 'hidden lg:flex'
         }`}>
           <div>
-            {/* Room Header */}
-            {/* Room Header with Room Name */}
+            {/* Room Header with Editable Room Name */}
             <div className="flex items-center justify-between mb-4">
-              <div className="truncate pr-2">
-                <div className="flex items-center gap-1 text-sm font-semibold text-white tracking-tight truncate">
-                  <span className="text-neutral-500 font-mono">#</span>
-                  <span className="truncate">{hostel.name}</span>
-                </div>
-                <div className="text-[10px] font-mono text-neutral-400 mt-0.5">
-                  Room {hostel.code}
+              <div className="truncate pr-2 flex-1">
+                {isEditingRoomName && isRoomHost ? (
+                  <form onSubmit={handleSaveRoomName} className="flex items-center gap-1.5 my-0.5">
+                    <input
+                      type="text"
+                      value={editedRoomName}
+                      onChange={(e) => setEditedRoomName(e.target.value)}
+                      maxLength={30}
+                      autoFocus
+                      className="bg-neutral-900 border border-neutral-700 px-2 py-1 rounded text-xs text-white outline-none w-full font-medium focus:border-white"
+                    />
+                    <button
+                      type="submit"
+                      className="p-1 rounded text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 cursor-pointer shrink-0"
+                      title="Save name"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditedRoomName(currentRoomName);
+                        setIsEditingRoomName(false);
+                      }}
+                      className="p-1 rounded text-neutral-400 hover:text-white hover:bg-neutral-800 cursor-pointer shrink-0"
+                      title="Cancel"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </form>
+                ) : (
+                  <div className="flex items-center gap-1.5 text-sm font-semibold text-white tracking-tight truncate">
+                    <span className="text-neutral-500 font-mono">#</span>
+                    <span className="truncate">{currentRoomName}</span>
+                    {isRoomHost && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditedRoomName(currentRoomName);
+                          setIsEditingRoomName(true);
+                        }}
+                        className="text-neutral-500 hover:text-white p-0.5 rounded transition-colors cursor-pointer shrink-0"
+                        title="Change room name"
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+                )}
+                <div className="flex items-center gap-1.5 text-[10px] font-mono text-neutral-400 mt-0.5">
+                  <span>Room {hostel.code}</span>
+                  {isRoomLocked && (
+                    <span className="text-amber-400 font-semibold">• Locked</span>
+                  )}
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setShowQrModal(true)}
-                className="text-neutral-400 hover:text-white p-1.5 rounded-lg hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
-                title="Room QR & Code"
-              >
-                <QrCode className="w-4 h-4" />
-              </button>
+
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowQrModal(true)}
+                  className="text-neutral-400 hover:text-white p-1.5 rounded-lg hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
+                  title="Room QR & Code"
+                >
+                  <QrCode className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Room Access Lock (Creator Only) */}
+            <div className="mb-4">
+              <div className="flex items-center justify-between text-[10px] font-mono text-neutral-500 uppercase tracking-wider mb-2">
+                <span className="flex items-center gap-1">
+                  {isRoomLocked ? <Lock className="w-3 h-3 text-amber-400" /> : <Unlock className="w-3 h-3" />}
+                  <span>ROOM ACCESS</span>
+                </span>
+                {isRoomHost ? (
+                  <span className="text-[9px] text-amber-400/80 font-mono font-medium">Creator control</span>
+                ) : (
+                  <span className="text-[9px] text-neutral-500 font-mono">
+                    {isRoomLocked ? 'Locked' : 'Open'}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between p-2.5 bg-neutral-900 border border-neutral-800 rounded-xl">
+                <div className="flex items-center gap-2 min-w-0 pr-2">
+                  <div
+                    className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                      isRoomLocked ? 'bg-amber-500/20 text-amber-300' : 'bg-neutral-800 text-neutral-400'
+                    }`}
+                  >
+                    {isRoomLocked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-medium text-white flex items-center gap-1">
+                      <span>{isRoomLocked ? 'Room is Locked' : 'Room is Unlocked'}</span>
+                    </div>
+                    <div className="text-[9px] text-neutral-400 truncate">
+                      {isRoomLocked ? 'New participants cannot join' : 'Anyone with code can join'}
+                    </div>
+                  </div>
+                </div>
+
+                {isRoomHost ? (
+                  <button
+                    type="button"
+                    onClick={handleToggleRoomLock}
+                    className={`px-3 py-1 rounded-full text-[11px] font-medium transition-colors cursor-pointer shrink-0 border ${
+                      isRoomLocked
+                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
+                        : 'bg-neutral-800 text-neutral-300 border-neutral-700 hover:text-white hover:bg-neutral-700'
+                    }`}
+                  >
+                    {isRoomLocked ? 'Unlock' : 'Lock Room'}
+                  </button>
+                ) : (
+                  <span
+                    className={`text-[10px] font-mono px-2 py-0.5 rounded-full shrink-0 ${
+                      isRoomLocked ? 'bg-amber-500/10 text-amber-400' : 'bg-neutral-800 text-neutral-400'
+                    }`}
+                  >
+                    {isRoomLocked ? 'Locked' : 'Open'}
+                  </span>
+                )}
+              </div>
             </div>
 
             {/* Playback Permissions section */}
@@ -1815,11 +2149,21 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
                             <Crown className={`w-3 h-3 ${peerIsAdmin ? 'fill-amber-400 text-amber-400' : 'text-neutral-400'}`} />
                             <span>{peerIsAdmin ? 'Admin' : '+ Admin'}</span>
                           </button>
-                        ) : (
-                          peerIsAdmin && !peer.isHost && (
-                            <span className="text-[9px] text-amber-400/90 font-medium px-1">Admin</span>
-                          )
+                        ) : peerIsAdmin && !peer.isHost ? (
+                          <span className="text-[9px] text-amber-400/90 font-medium px-1">Admin</span>
+                        ) : null}
+                        {/* Creator can remove / kick participant */}
+                        {isRoomHost && !peer.isHost && (
+                          <button
+                            type="button"
+                            onClick={() => handleKickParticipant(peer.id, peer.name)}
+                            className="p-1 rounded text-neutral-500 hover:text-red-400 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 transition-colors cursor-pointer"
+                            title={`Remove ${peer.name} from room`}
+                          >
+                            <UserMinus className="w-3.5 h-3.5" />
+                          </button>
                         )}
+
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                       </div>
                     </div>
@@ -2477,6 +2821,45 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
         userName={effectiveUserName}
         canAddMusic={canAddMusic}
       />
+      {/* Kicked Notice Modal */}
+      {kickedNotice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="max-w-xs w-full bg-neutral-900 border border-neutral-800 rounded-2xl p-5 text-center shadow-2xl">
+            <div className="w-10 h-10 rounded-full bg-red-500/20 text-red-400 flex items-center justify-center mx-auto mb-3">
+              <UserMinus className="w-5 h-5" />
+            </div>
+            <h3 className="text-sm font-semibold text-white mb-1">Removed from Room</h3>
+            <p className="text-xs text-neutral-400 mb-4">{kickedNotice}</p>
+            <button
+              type="button"
+              onClick={onLeave}
+              className="w-full py-2 bg-white text-black font-medium text-xs rounded-full hover:bg-neutral-200 cursor-pointer transition-colors shadow-sm"
+            >
+              Back to Home
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Room Closed Notice Modal */}
+      {closedNotice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="max-w-xs w-full bg-neutral-900 border border-neutral-800 rounded-2xl p-5 text-center shadow-2xl">
+            <div className="w-10 h-10 rounded-full bg-red-500/20 text-red-400 flex items-center justify-center mx-auto mb-3">
+              <Power className="w-5 h-5" />
+            </div>
+            <h3 className="text-sm font-semibold text-white mb-1">Room Closed</h3>
+            <p className="text-xs text-neutral-400 mb-4">{closedNotice}</p>
+            <button
+              type="button"
+              onClick={onLeave}
+              className="w-full py-2 bg-white text-black font-medium text-xs rounded-full hover:bg-neutral-200 cursor-pointer transition-colors shadow-sm"
+            >
+              Back to Home
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
