@@ -27,9 +27,9 @@ export type SyncEvent =
   | { type: 'PEER_PING'; peerId: string; name: string; isHost: boolean; timestamp: number }
   | { type: 'PEER_PONG'; peerId: string; name: string; origTimestamp: number }
   | { type: 'PEER_LEAVE'; peerId: string }
-  | { type: 'AUDIO_PLAY'; trackId: string; currentTime: number; serverTimestamp: number }
-  | { type: 'AUDIO_PAUSE'; trackId: string; currentTime: number }
-  | { type: 'AUDIO_SEEK'; currentTime: number }
+  | { type: 'AUDIO_PLAY'; trackId: string; currentTime: number; serverTimestamp?: number; sentAt?: number }
+  | { type: 'AUDIO_PAUSE'; trackId: string; currentTime: number; sentAt?: number }
+  | { type: 'AUDIO_SEEK'; currentTime: number; isManual?: boolean; sentAt?: number }
   | { type: 'QUEUE_ADD'; track: any }
   | { type: 'QUEUE_CLEAR' }
   | { type: 'CHAT_MESSAGE'; message: any }
@@ -58,7 +58,8 @@ export type SyncEvent =
       currentTrackIndex: number;
       isPlaying: boolean;
       currentTime: number;
-      serverTimestamp: number;
+      serverTimestamp?: number;
+      sentAt?: number;
       playbackPermission: 'everyone' | 'admins';
       addMusicPermission: 'everyone' | 'admins';
       adminPeerIds: string[];

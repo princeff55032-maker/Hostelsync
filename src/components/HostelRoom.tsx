@@ -331,16 +331,20 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
     });
 
     // Clock calibration interval, stale peer cleanup, and periodic playback time-lock
+    let syncTickCount = 0;
     const statsInterval = setInterval(() => {
       setLiveRtt(sync.measuredRtt);
       setLiveOffset(sync.measuredOffset);
 
-      // Periodic time lock sync: Admin broadcasts current time every 2s so peers never drift
-      if (isUserAdminRef.current && isPlayingRef.current) {
+      // Periodic time lock sync: Admin broadcasts current time every 2.5s so peers stay in sync without network flood
+      syncTickCount++;
+      if (syncTickCount % 2 === 0 && isUserAdminRef.current && isPlayingRef.current) {
         const currentLiveTime = audioRef.current?.currentTime ?? currentTimeRef.current;
         sync.broadcast({
           type: 'AUDIO_SEEK',
           currentTime: currentLiveTime,
+          isManual: false,
+          sentAt: Date.now(),
         });
       }
 
@@ -351,7 +355,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
         connectedPeersRef.current = alive;
         return alive;
       });
-    }, 1000);
+    }, 1250);
 
     return () => {
       clearInterval(statsInterval);
@@ -460,9 +464,14 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
           setCurrentTrackIndex(event.currentTrackIndex);
         }
 
-        const networkDelay = event.serverTimestamp
-          ? Math.max(0, (performance.now() - event.serverTimestamp) / 1000)
-          : 0;
+        const sentTime = event.sentAt || event.serverTimestamp;
+        let networkDelay = 0;
+        if (sentTime && Math.abs(Date.now() - sentTime) < 10000) {
+          networkDelay = Math.max(0, (Date.now() - sentTime) / 1000);
+        } else {
+          networkDelay = Math.max(0.01, (syncRef.current?.measuredRtt || 60) / 2000);
+        }
+        networkDelay = Math.min(2.0, networkDelay);
         const targetTime = (event.currentTime || 0) + networkDelay;
         setCurrentTime(targetTime);
         setExternalSeekTime(targetTime);
@@ -473,13 +482,18 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
           audioEngine.resume();
           if (audioRef.current && audioRef.current.src) {
             audioRef.current.currentTime = targetTime;
+            audioRef.current.playbackRate = 1.0;
             audioRef.current.play().then(() => {
               setHasAudioUnlocked(true);
             }).catch(() => {
               setHasAudioUnlocked(false);
             });
-          }
-          if (remoteAudioRef.current && remoteAudioRef.current.srcObject) {
+            // Stop remote WebRTC stream to eliminate delayed double echo
+            if (remoteAudioRef.current) {
+              remoteAudioRef.current.pause();
+              remoteAudioRef.current.volume = 0;
+            }
+          } else if (remoteAudioRef.current && remoteAudioRef.current.srcObject) {
             remoteAudioRef.current.play().then(() => {
               setHasAudioUnlocked(true);
             }).catch(() => {
@@ -506,7 +520,8 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
             currentTrackIndex: currentTrackIndexRef.current,
             isPlaying: isPlayingRef.current,
             currentTime: audioRef.current?.currentTime ?? currentTimeRef.current,
-            serverTimestamp: performance.now(),
+            serverTimestamp: Date.now(),
+            sentAt: Date.now(),
             playbackPermission: playbackPermissionRef.current,
             addMusicPermission: addMusicPermissionRef.current,
             adminPeerIds: adminPeerIdsRef.current,
@@ -569,7 +584,8 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
             currentTrackIndex: currentTrackIndexRef.current,
             isPlaying: isPlayingRef.current,
             currentTime: audioRef.current?.currentTime ?? currentTimeRef.current,
-            serverTimestamp: performance.now(),
+            serverTimestamp: Date.now(),
+            sentAt: Date.now(),
             playbackPermission: playbackPermissionRef.current,
             addMusicPermission: addMusicPermissionRef.current,
             adminPeerIds: adminPeerIdsRef.current,
@@ -650,26 +666,35 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
           });
         }
 
-        const networkDelay = event.serverTimestamp
-          ? Math.max(0, (performance.now() - event.serverTimestamp) / 1000)
-          : 0;
+        const sentTime = event.sentAt || event.serverTimestamp;
+        let networkDelay = 0;
+        if (sentTime && Math.abs(Date.now() - sentTime) < 10000) {
+          networkDelay = Math.max(0, (Date.now() - sentTime) / 1000);
+        } else {
+          networkDelay = Math.max(0.01, (syncRef.current?.measuredRtt || 60) / 2000);
+        }
+        networkDelay = Math.min(2.0, networkDelay);
         const targetTime = event.currentTime + networkDelay;
 
         setCurrentTime(targetTime);
         setExternalSeekTime(targetTime);
 
         if (audioRef.current && audioRef.current.src) {
-          if (Math.abs(audioRef.current.currentTime - targetTime) > 0.25) {
+          if (Math.abs(audioRef.current.currentTime - targetTime) > 0.35) {
             audioRef.current.currentTime = targetTime;
           }
+          audioRef.current.playbackRate = 1.0;
           audioRef.current.play().then(() => {
             setHasAudioUnlocked(true);
           }).catch(() => {
             setHasAudioUnlocked(false);
           });
-        }
-
-        if (remoteAudioRef.current && remoteAudioRef.current.srcObject) {
+          // Avoid duplicate delayed stream playback when local audio file is playing
+          if (remoteAudioRef.current) {
+            remoteAudioRef.current.pause();
+            remoteAudioRef.current.volume = 0;
+          }
+        } else if (remoteAudioRef.current && remoteAudioRef.current.srcObject) {
           remoteAudioRef.current.play().then(() => {
             setHasAudioUnlocked(true);
           }).catch(() => {
@@ -687,6 +712,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
         setIsPlaying(false);
         if (audioRef.current) {
           audioRef.current.pause();
+          audioRef.current.playbackRate = 1.0;
         }
         if (remoteAudioRef.current) {
           remoteAudioRef.current.pause();
@@ -702,15 +728,56 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
       }
       case 'AUDIO_SEEK': {
         if (!isUserAdminRef.current) {
+          const sentTime = event.sentAt;
+          let latency = 0;
+          if (sentTime && Math.abs(Date.now() - sentTime) < 10000) {
+            latency = Math.max(0, (Date.now() - sentTime) / 1000);
+          } else {
+            latency = Math.max(0.01, (syncRef.current?.measuredRtt || 60) / 2000);
+          }
+          latency = Math.min(1.5, latency);
+          const targetTime = event.currentTime + latency;
           const currentLocalTime = audioRef.current?.currentTime ?? currentTimeRef.current;
-          const drift = Math.abs(currentLocalTime - event.currentTime);
-          if (drift > 0.35) {
+          const diff = targetTime - currentLocalTime;
+          const drift = Math.abs(diff);
+
+          if (event.isManual) {
+            // User explicitly scrubbed timeline: immediate hard seek
             if (audioRef.current && activeTrackRef.current?.sourceType !== 'youtube') {
               audioRef.current.currentTime = event.currentTime;
+              audioRef.current.playbackRate = 1.0;
             }
             setExternalSeekTime(event.currentTime);
+            setCurrentTime(event.currentTime);
+          } else {
+            // Periodic background sync: smooth clock nudge, zero stutter
+            if (activeTrackRef.current?.sourceType === 'youtube') {
+              if (drift > 2.0) {
+                setExternalSeekTime(targetTime);
+                setCurrentTime(targetTime);
+              }
+            } else if (audioRef.current) {
+              if (drift < 0.15) {
+                // In sync: ensure normal playback rate
+                if (audioRef.current.playbackRate !== 1.0) {
+                  audioRef.current.playbackRate = 1.0;
+                }
+              } else if (drift <= 1.5) {
+                // Gently nudge rate to catch up or wait up without audible pause/stutter
+                if (diff > 0) {
+                  audioRef.current.playbackRate = 1.04;
+                } else {
+                  audioRef.current.playbackRate = 0.96;
+                }
+              } else {
+                // Drift is large (>1.5s): hard seek to snap back into sync
+                audioRef.current.currentTime = targetTime;
+                audioRef.current.playbackRate = 1.0;
+                setExternalSeekTime(targetTime);
+                setCurrentTime(targetTime);
+              }
+            }
           }
-          setCurrentTime(event.currentTime);
         }
         break;
       }
@@ -828,18 +895,28 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
     }
   }, [isPlaying, activeTrack]);
 
-  // Sync play/pause with remote live WebRTC stream
+  // Sync play/pause with remote live WebRTC stream (only when no local audio file is playing)
   useEffect(() => {
     const remoteAudio = remoteAudioRef.current;
-    if (!remoteAudio || !remoteAudio.srcObject) return;
+    if (!remoteAudio) return;
+
+    const hasLocalAudio = Boolean(activeTrack?.url && activeTrack.sourceType !== 'youtube');
+    if (hasLocalAudio) {
+      remoteAudio.pause();
+      remoteAudio.volume = 0;
+      return;
+    }
+
+    if (!remoteAudio.srcObject) return;
 
     if (isPlaying) {
       audioEngine.resume();
+      remoteAudio.volume = isMuted ? 0 : volume / 100;
       remoteAudio.play().catch(() => {});
     } else {
       remoteAudio.pause();
     }
-  }, [isPlaying]);
+  }, [isPlaying, activeTrack?.url, activeTrack?.sourceType, volume, isMuted]);
 
   const toggleMetronome = () => {
     const next = audioEngine.toggleMetronome((beat) => {
@@ -886,17 +963,19 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
     const nextState = !isPlaying;
     setIsPlaying(nextState);
 
+    const hasLocalAudio = Boolean(audioRef.current && activeTrack?.url && activeTrack.sourceType !== 'youtube');
+
     if (nextState) {
       audioEngine.playAmbientChord(volume);
-      if (audioRef.current && activeTrack?.url && activeTrack.sourceType !== 'youtube') {
+      if (hasLocalAudio && audioRef.current) {
+        audioRef.current.playbackRate = 1.0;
         audioRef.current.play().catch(() => {});
         audioEngine.attachMediaElement(audioRef.current);
         const liveStream = audioEngine.getOutputStream();
         if (liveStream && syncRef.current) {
           syncRef.current.streamAudio(liveStream);
         }
-      }
-      if (remoteAudioRef.current && remoteAudioRef.current.srcObject) {
+      } else if (remoteAudioRef.current && remoteAudioRef.current.srcObject) {
         remoteAudioRef.current.play().catch(() => {});
       }
     } else {
@@ -915,13 +994,15 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
           type: 'AUDIO_PLAY',
           trackId: activeTrack?.id || '',
           currentTime: currentTime,
-          serverTimestamp: performance.now(),
+          sentAt: Date.now(),
+          serverTimestamp: Date.now(),
         });
       } else {
         syncRef.current.broadcast({
           type: 'AUDIO_PAUSE',
           trackId: activeTrack?.id || '',
           currentTime: currentTime,
+          sentAt: Date.now(),
         });
       }
     }
@@ -950,7 +1031,8 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
         type: 'AUDIO_PLAY',
         trackId: nextTrk?.id || '',
         currentTime: 0,
-        serverTimestamp: performance.now(),
+        sentAt: Date.now(),
+        serverTimestamp: Date.now(),
       });
     }
   };
@@ -959,13 +1041,18 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
     if (!canControlPlayback) return;
     if (tracks.length === 0) return;
     if (currentTime > 3) {
-      if (audioRef.current && activeTrack?.sourceType !== 'youtube') audioRef.current.currentTime = 0;
+      if (audioRef.current && activeTrack?.sourceType !== 'youtube') {
+        audioRef.current.currentTime = 0;
+        audioRef.current.playbackRate = 1.0;
+      }
       setExternalSeekTime(0);
       setCurrentTime(0);
       if (syncRef.current && !isSyncingFromRemote.current) {
         syncRef.current.broadcast({
           type: 'AUDIO_SEEK',
           currentTime: 0,
+          isManual: true,
+          sentAt: Date.now(),
         });
       }
       return;
@@ -982,7 +1069,8 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
         type: 'AUDIO_PLAY',
         trackId: prevTrk?.id || '',
         currentTime: 0,
-        serverTimestamp: performance.now(),
+        sentAt: Date.now(),
+        serverTimestamp: Date.now(),
       });
     }
   };
@@ -999,6 +1087,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
 
     if (audioRef.current && activeTrack?.sourceType !== 'youtube') {
       audioRef.current.currentTime = newTime;
+      audioRef.current.playbackRate = 1.0;
     }
     setExternalSeekTime(newTime);
     setCurrentTime(newTime);
@@ -1007,6 +1096,8 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
       syncRef.current.broadcast({
         type: 'AUDIO_SEEK',
         currentTime: newTime,
+        isManual: true,
+        sentAt: Date.now(),
       });
     }
   };
@@ -1054,7 +1145,8 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
           type: 'AUDIO_PLAY',
           trackId: newTrk.id,
           currentTime: 0,
-          serverTimestamp: performance.now(),
+          sentAt: Date.now(),
+          serverTimestamp: Date.now(),
         });
       }
 
@@ -1212,7 +1304,8 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
             type: 'AUDIO_PLAY',
             trackId: newTrk.id,
             currentTime: 0,
-            serverTimestamp: performance.now(),
+            sentAt: Date.now(),
+            serverTimestamp: Date.now(),
           });
         }
 
@@ -1703,7 +1796,8 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
                         type: 'AUDIO_PLAY',
                         trackId: activeTrack.id,
                         currentTime,
-                        serverTimestamp: performance.now(),
+                        sentAt: Date.now(),
+                        serverTimestamp: Date.now(),
                       });
                     }
                   } else if (state === 'paused') {
@@ -1713,6 +1807,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
                         type: 'AUDIO_PAUSE',
                         trackId: activeTrack.id,
                         currentTime,
+                        sentAt: Date.now(),
                       });
                     }
                   } else if (state === 'ended') {
@@ -1788,7 +1883,8 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
                             type: 'AUDIO_PLAY',
                             trackId: tr.id,
                             currentTime: 0,
-                            serverTimestamp: performance.now(),
+                            sentAt: Date.now(),
+                            serverTimestamp: Date.now(),
                           });
                         }
                       }}
