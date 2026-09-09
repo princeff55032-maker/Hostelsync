@@ -9,6 +9,8 @@ interface YouTubePlayerProps {
   volume: number;
   isMuted: boolean;
   seekTime: number | null;
+  unlockedTrigger?: number;
+  onAutoplayBlocked?: () => void;
   onTimeUpdate: (current: number, duration: number) => void;
   onStateChange: (state: 'playing' | 'paused' | 'ended') => void;
 }
@@ -26,6 +28,8 @@ export function YouTubePlayer({
   volume,
   isMuted,
   seekTime,
+  unlockedTrigger,
+  onAutoplayBlocked,
   onTimeUpdate,
   onStateChange,
 }: YouTubePlayerProps) {
@@ -35,6 +39,7 @@ export function YouTubePlayer({
   const [embedError, setEmbedError] = useState<string | null>(null);
   const timePollRef = useRef<any>(null);
   const lastStateChangeRef = useRef<'playing' | 'paused' | 'ended' | null>(null);
+  const isInitialAutoplayBlockedRef = useRef<boolean>(true);
 
   // 1. Ensure YouTube Iframe API is loaded
   useEffect(() => {
@@ -117,16 +122,25 @@ export function YouTubePlayer({
         events: {
           onReady: (event: any) => {
             playerRef.current = event.target;
-            event.target.setVolume(isMuted ? 0 : volume);
+            const target = event.target;
+            target.setVolume(isMuted ? 0 : volume);
             if (isMuted) {
-              event.target.mute();
+              target.mute();
             } else {
-              event.target.unMute();
+              target.unMute();
             }
             if (isPlaying) {
-              event.target.playVideo();
+              try {
+                target.playVideo();
+              } catch {
+                try {
+                  target.mute();
+                  target.playVideo();
+                  onAutoplayBlocked?.();
+                } catch {}
+              }
             }
-            const dur = event.target.getDuration();
+            const dur = target.getDuration();
             if (dur > 0) {
               onTimeUpdate(0, dur);
             }
@@ -134,11 +148,21 @@ export function YouTubePlayer({
           onStateChange: (event: any) => {
             // YT.PlayerState: -1 (UNSTARTED), 0 (ENDED), 1 (PLAYING), 2 (PAUSED), 3 (BUFFERING), 5 (CUED)
             if (event.data === 1) {
+              isInitialAutoplayBlockedRef.current = false;
               if (lastStateChangeRef.current !== 'playing') {
                 lastStateChangeRef.current = 'playing';
                 onStateChange('playing');
               }
             } else if (event.data === 2) {
+              // If we are supposed to be playing, but the browser halted unmuted autoplay upon mounting:
+              if (isPlaying && isInitialAutoplayBlockedRef.current) {
+                try {
+                  event.target.mute();
+                  event.target.playVideo();
+                } catch {}
+                onAutoplayBlocked?.();
+                return;
+              }
               if (lastStateChangeRef.current !== 'paused') {
                 lastStateChangeRef.current = 'paused';
                 onStateChange('paused');
@@ -218,6 +242,21 @@ export function YouTubePlayer({
       }
     } catch {}
   }, [seekTime]);
+
+  // 6. React to user gesture audio unlock trigger (unmute & resume)
+  useEffect(() => {
+    if (!playerRef.current) return;
+    try {
+      isInitialAutoplayBlockedRef.current = false;
+      if (!isMuted && typeof playerRef.current.unMute === 'function') {
+        playerRef.current.unMute();
+        playerRef.current.setVolume(volume);
+      }
+      if (isPlaying && typeof playerRef.current.playVideo === 'function') {
+        playerRef.current.playVideo();
+      }
+    } catch {}
+  }, [unlockedTrigger, isPlaying, isMuted, volume]);
 
   // 6. Polling playback time and duration to keep HostelSync bottom bar timeline in exact sync
   useEffect(() => {

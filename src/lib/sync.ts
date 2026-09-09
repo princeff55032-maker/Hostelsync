@@ -79,6 +79,10 @@ export class RoomSync {
   private onStreamCallback: ((stream: MediaStream, peerId: string) => void) | null = null;
   private onFileCallback: ((fileData: TrackFileData) => void) | null = null;
   private heartbeatInterval: any = null;
+  private serverPollInterval: any = null;
+  private lastServerEventTime: number = 0;
+  private processedEventIds = new Set<string>();
+  private isClosed: boolean = false;
   public measuredRtt: number = 2.4;
   public measuredOffset: number = 0;
 
@@ -172,6 +176,7 @@ export class RoomSync {
       }
 
       this.startHeartbeat();
+      this.startServerSync();
     }
   }
 
@@ -257,12 +262,80 @@ export class RoomSync {
     }, 2500);
   }
 
-  private handleIncomingMessage(event: SyncEvent, source: 'local' | 'webrtc') {
+  private startServerSync() {
+    const poll = async () => {
+      if (this.isClosed) return;
+      try {
+        const res = await fetch('/api/rooms/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            code: this.roomCode,
+            peerId: this.peerId,
+            peerName: this.peerName,
+            isHost: this.isHost,
+            since: this.lastServerEventTime,
+          }),
+        });
+
+        if (res.ok && !this.isClosed) {
+          const data = await res.json();
+          if (data.serverTime) {
+            this.lastServerEventTime = data.serverTime;
+          }
+
+          // 1. Process active peers from server
+          if (Array.isArray(data.peers) && this.onEventCallback) {
+            for (const p of data.peers) {
+              if (p.id !== this.peerId) {
+                this.onEventCallback({
+                  type: 'PEER_PING',
+                  peerId: p.id,
+                  name: p.name,
+                  isHost: Boolean(p.isHost),
+                  timestamp: performance.now(),
+                });
+              }
+            }
+          }
+
+          // 2. Process unread events from other devices
+          if (Array.isArray(data.events)) {
+            for (const ev of data.events) {
+              this.handleIncomingMessage(ev, 'server');
+            }
+          }
+        }
+      } catch {
+        // Will retry on next heartbeat tick
+      }
+    };
+
+    poll();
+    this.serverPollInterval = setInterval(poll, 1200);
+  }
+
+  private handleIncomingMessage(event: SyncEvent, source: 'local' | 'webrtc' | 'server') {
     if (!event) return;
 
     // Ignore self-echoes
     if ('peerId' in event && event.peerId === this.peerId) {
       return;
+    }
+
+    // Deduplicate identical events received across multiple transports (local/webrtc/server)
+    const eventKey =
+      (event as any).id ||
+      `${event.type}_${(event as any).sentAt || (event as any).serverTimestamp || (event as any).currentTime || ''}_${(event as any).trackId || (event as any).peerId || ''}`;
+    if (eventKey && this.processedEventIds.has(eventKey)) {
+      return;
+    }
+    if (eventKey) {
+      this.processedEventIds.add(eventKey);
+      if (this.processedEventIds.size > 200) {
+        const first = this.processedEventIds.values().next().value;
+        if (first) this.processedEventIds.delete(first);
+      }
     }
 
     // Handle ping/pong for real RTT measurement and peer discovery
@@ -302,12 +375,57 @@ export class RoomSync {
         this.sendWebRtcAction(event).catch(() => {});
       } catch {}
     }
+
+    // 3. Reliable server event relay (ensures 100% cross-device delivery regardless of NAT/WebRTC blockers)
+    try {
+      fetch('/api/rooms/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: this.roomCode,
+          peerId: this.peerId,
+          peerName: this.peerName,
+          isHost: this.isHost,
+          event,
+          since: this.lastServerEventTime,
+        }),
+      }).catch(() => {});
+    } catch {}
   }
 
   public close() {
+    this.isClosed = true;
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
     }
+    if (this.serverPollInterval) {
+      clearInterval(this.serverPollInterval);
+    }
+
+    try {
+      if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+        navigator.sendBeacon(
+          '/api/rooms/sync',
+          JSON.stringify({
+            code: this.roomCode,
+            peerId: this.peerId,
+            action: 'leave',
+          })
+        );
+      } else {
+        fetch('/api/rooms/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            code: this.roomCode,
+            peerId: this.peerId,
+            action: 'leave',
+          }),
+          keepalive: true,
+        }).catch(() => {});
+      }
+    } catch {}
+
     this.broadcast({
       type: 'PEER_LEAVE',
       peerId: this.peerId,

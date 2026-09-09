@@ -188,19 +188,21 @@ export function UploadAudioModal({
       alert('Adding music is currently restricted to room Admins.');
       return;
     }
-    if (!linkUrl.trim()) return;
+    const trimmed = linkUrl.trim();
+    if (!trimmed) return;
 
+    const ytId = getYouTubeVideoId(trimmed);
     let detectedPlatform: 'youtube' | 'soundcloud' | 'stream' = 'stream';
-    if (linkPlatform === 'youtube') detectedPlatform = 'youtube';
-    else if (linkPlatform === 'soundcloud') detectedPlatform = 'soundcloud';
+    if (ytId || linkPlatform === 'youtube') detectedPlatform = 'youtube';
+    else if (linkPlatform === 'soundcloud' || trimmed.toLowerCase().includes('soundcloud.com')) detectedPlatform = 'soundcloud';
 
     onAddTrack({
-      title: linkTitle.trim() || 'Shared Web Stream',
+      title: linkTitle.trim() || (detectedPlatform === 'youtube' ? 'YouTube Track' : 'Shared Web Stream'),
       artist: linkArtist.trim() || (detectedPlatform === 'youtube' ? 'YouTube' : 'Web Stream'),
       duration: '03:45',
       durationSeconds: 225,
       sourceType: detectedPlatform,
-      url: linkUrl.trim(),
+      url: trimmed,
     });
 
     handleClose();

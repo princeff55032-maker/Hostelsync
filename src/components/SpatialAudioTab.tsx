@@ -21,6 +21,7 @@ import {
   Layers,
 } from 'lucide-react';
 import { audioEngine } from '@/lib/audioEngine';
+import { Peer } from '@/lib/sync';
 
 export interface SpatialFilterParams {
   volumeMultiplier: number;
@@ -36,6 +37,8 @@ export interface SpatialFilterParams {
 interface SpatialAudioTabProps {
   userName: string;
   isHost?: boolean;
+  connectedPeers?: Peer[];
+  adminPeerIds?: string[];
   onSpatialChange?: (params: SpatialFilterParams) => void;
 }
 
@@ -59,12 +62,27 @@ const FILTER_PRESETS: FilterPreset[] = [
   { id: 'club', name: 'Nightclub', iconType: 'club', volumeScale: 0.95, lowPassHz: 14000, highPassHz: 40, bassDb: 10, trebleDb: 2 },
 ];
 
+const STUDIO_SLOTS = [
+  { x: 24, y: 52 },
+  { x: 76, y: 52 },
+  { x: 26, y: 78 },
+  { x: 74, y: 78 },
+  { x: 16, y: 32 },
+  { x: 84, y: 32 },
+  { x: 50, y: 86 },
+  { x: 36, y: 64 },
+  { x: 64, y: 64 },
+];
+
 export function SpatialAudioTab({
   userName,
   isHost = true,
+  connectedPeers = [],
+  adminPeerIds = [],
   onSpatialChange,
 }: SpatialAudioTabProps) {
-  const [isSpatialEnabled, setIsSpatialEnabled] = useState<boolean>(true);
+  // Default spatial audio is OFF as requested
+  const [isSpatialEnabled, setIsSpatialEnabled] = useState<boolean>(false);
 
   // Smooth floating-point coordinates (0% to 100%)
   // Speaker / Host position
@@ -368,7 +386,7 @@ export function SpatialAudioTab({
         {/* HOST / SPEAKER NODE (Initial + Crown) */}
         <div
           onPointerDown={(e) => startDrag('speaker', e)}
-          className={`absolute -translate-x-1/2 -translate-y-1/2 z-20 cursor-grab active:cursor-grabbing select-none touch-none ${
+          className={`absolute -translate-x-1/2 -translate-y-1/2 z-25 cursor-grab active:cursor-grabbing select-none touch-none flex flex-col items-center ${
             draggingNode === 'speaker' ? 'scale-105 shadow-xl' : ''
           }`}
           style={{
@@ -376,10 +394,10 @@ export function SpatialAudioTab({
             top: `${speakerPos.y}%`,
             touchAction: 'none',
           }}
-          title="Speaker / Host Origin (Drag to move)"
+          title="Speaker / Host Origin (Drag to move sound origin)"
         >
           <div className="relative">
-            <div className="w-12 h-12 rounded-full bg-emerald-800/95 border-2 border-emerald-500/80 shadow-lg shadow-emerald-950 flex items-center justify-center text-emerald-100 font-bold text-xs">
+            <div className="w-11 h-11 rounded-full bg-emerald-800/95 border-2 border-emerald-500/80 shadow-lg shadow-emerald-950 flex items-center justify-center text-emerald-100 font-bold text-xs">
               {initials}
             </div>
             {/* Host Crown */}
@@ -387,12 +405,15 @@ export function SpatialAudioTab({
               <Crown className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
             </div>
           </div>
+          <span className="mt-1 px-1.5 py-0.2 bg-neutral-900/90 border border-neutral-700/60 rounded text-[9px] text-neutral-300 font-medium shadow-xs whitespace-nowrap">
+            {isHost ? 'You (Host)' : 'Host'}
+          </span>
         </div>
 
-        {/* LISTENING SOURCE NODE (Headphones) */}
+        {/* LISTENING SOURCE NODE: You (Headphones) */}
         <div
           onPointerDown={(e) => startDrag('listener', e)}
-          className={`absolute -translate-x-1/2 -translate-y-1/2 z-30 cursor-grab active:cursor-grabbing select-none touch-none ${
+          className={`absolute -translate-x-1/2 -translate-y-1/2 z-30 cursor-grab active:cursor-grabbing select-none touch-none flex flex-col items-center ${
             draggingNode === 'listener' ? 'scale-110 shadow-2xl' : ''
           }`}
           style={{
@@ -400,12 +421,63 @@ export function SpatialAudioTab({
             top: `${listenerPos.y}%`,
             touchAction: 'none',
           }}
-          title="Listening Source (Drag to hear distance and pan changes)"
+          title="Your Listening Position (Drag anywhere on grid)"
         >
-          <div className="w-10 h-10 rounded-full bg-emerald-950 border-2 border-emerald-400 flex items-center justify-center text-emerald-400 shadow-xl shadow-emerald-950/80">
-            <Headphones className="w-4 h-4" />
+          <div className="relative flex flex-col items-center">
+            <div className="w-10 h-10 rounded-full bg-emerald-950 border-2 border-emerald-400 flex items-center justify-center text-emerald-400 shadow-xl shadow-emerald-950/80">
+              <Headphones className="w-4 h-4" />
+              <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border border-neutral-900 animate-pulse" />
+            </div>
+            <span className="mt-1 px-1.5 py-0.2 bg-emerald-950/90 border border-emerald-500/50 rounded text-[9px] text-emerald-300 font-bold shadow-xs whitespace-nowrap">
+              You
+            </span>
           </div>
         </div>
+
+        {/* ALL CONNECTED ROOM MEMBERS ON THE SPATIAL GRID */}
+        {connectedPeers.map((peer, idx) => {
+          const slot = STUDIO_SLOTS[idx % STUDIO_SLOTS.length];
+          const peerInitial = (peer.name || 'M').trim().slice(0, 2).toUpperCase();
+          const isPeerAdmin = Boolean(peer.isHost || (adminPeerIds && adminPeerIds.includes(peer.id)));
+
+          return (
+            <div
+              key={peer.id}
+              className="absolute -translate-x-1/2 -translate-y-1/2 z-15 flex flex-col items-center select-none pointer-events-auto transition-all duration-300"
+              style={{
+                left: `${slot.x}%`,
+                top: `${slot.y}%`,
+              }}
+              title={`${peer.name} (${isPeerAdmin ? 'Admin' : 'Member'})`}
+            >
+              <div className="relative group cursor-pointer">
+                <div
+                  className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs shadow-md border transition-transform group-hover:scale-110 ${
+                    peer.isHost
+                      ? 'bg-amber-950/90 border-amber-500/80 text-amber-300 shadow-amber-950/60'
+                      : isPeerAdmin
+                      ? 'bg-neutral-850 border-amber-500/60 text-amber-400'
+                      : 'bg-neutral-900 border-neutral-700 text-neutral-300'
+                  }`}
+                >
+                  {peerInitial}
+                </div>
+
+                {isPeerAdmin && (
+                  <div className="absolute -top-1 -right-1 bg-neutral-900 rounded-full p-0.5 border border-amber-500/60 shadow">
+                    <Crown className="w-2.5 h-2.5 text-amber-400 fill-amber-400" />
+                  </div>
+                )}
+
+                <span className="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 border border-neutral-900 animate-pulse" />
+              </div>
+
+              <span className="mt-1 px-1.5 py-0.2 bg-neutral-900/90 border border-neutral-800 rounded text-[9px] text-neutral-300 font-medium truncate max-w-[68px] shadow-xs whitespace-nowrap">
+                {peer.name}
+              </span>
+            </div>
+          );
+        })}
       </div>
 
       {/* 3. Distance / Volume Indicator & Move to Top Button */}

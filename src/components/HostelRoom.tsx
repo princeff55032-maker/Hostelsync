@@ -84,6 +84,8 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
   const isSyncingFromRemote = useRef<boolean>(false);
   const lastAudioTimeRef = useRef<number>(-1);
   const [hasAudioUnlocked, setHasAudioUnlocked] = useState<boolean>(true);
+  const [audioUnlockVersion, setAudioUnlockVersion] = useState<number>(0);
+  const pendingPlayTrackIdRef = useRef<string | null>(null);
 
   // Permissions State (Real-time Synced across tabs/devices)
   const [playbackPermission, setPlaybackPermission] = useState<'everyone' | 'admins'>('everyone');
@@ -433,6 +435,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
     const handleInteraction = () => {
       audioEngine.unlockAudio();
       audioEngine.resume();
+      setAudioUnlockVersion((v) => v + 1);
       if (isPlayingRef.current) {
         if (audioRef.current && audioRef.current.src) {
           audioRef.current.play().catch(() => {});
@@ -530,8 +533,8 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
         break;
       }
       case 'ROOM_STATE_SYNC': {
-        // Only non-admin members should accept room state sync from the admin
-        if (isUserAdminRef.current) break;
+        // Only ignore if this instance is the room host AND already has an active queue of tracks
+        if (isRoomHost && tracksRef.current.length > 0) break;
 
         setPlaybackPermission(event.playbackPermission);
         setAddMusicPermission(event.addMusicPermission);
@@ -566,6 +569,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
           setIsPlaying(true);
           audioEngine.unlockAudio();
           audioEngine.resume();
+          setAudioUnlockVersion((v) => v + 1);
           if (audioRef.current && audioRef.current.src) {
             audioRef.current.currentTime = targetTime;
             audioRef.current.playbackRate = 1.0;
@@ -731,12 +735,17 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
         setIsPlaying(true);
         audioEngine.unlockAudio();
         audioEngine.resume();
+        setAudioUnlockVersion((v) => v + 1);
 
         if (event.trackId) {
+          pendingPlayTrackIdRef.current = event.trackId;
           setTracks((prev) => {
             const idx = prev.findIndex((t) => t.id === event.trackId);
-            if (idx !== -1 && idx !== currentTrackIndexRef.current) {
-              setCurrentTrackIndex(idx);
+            if (idx !== -1) {
+              pendingPlayTrackIdRef.current = null;
+              if (idx !== currentTrackIndexRef.current) {
+                setCurrentTrackIndex(idx);
+              }
             }
             return prev;
           });
@@ -780,7 +789,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
 
         setTimeout(() => {
           isSyncingFromRemote.current = false;
-        }, 120);
+        }, 1500);
         break;
       }
       case 'AUDIO_PAUSE': {
@@ -866,7 +875,19 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
         setTracks((prev) => {
           const already = prev.find((t) => t.id === event.track.id);
           if (already) return prev;
-          return [...prev, event.track];
+          const next = [...prev, event.track];
+          // Auto-start playback if queue was empty or if this track was requested to play
+          if (prev.length === 0 || pendingPlayTrackIdRef.current === event.track.id) {
+            setCurrentTrackIndex(prev.length === 0 ? 0 : next.length - 1);
+            setCurrentTime(0);
+            setExternalSeekTime(0);
+            setIsPlaying(true);
+            audioEngine.unlockAudio();
+            audioEngine.resume();
+            setAudioUnlockVersion((v) => v + 1);
+            pendingPlayTrackIdRef.current = null;
+          }
+          return next;
         });
         break;
       }
@@ -965,6 +986,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
         audio.currentTime = currentTimeRef.current;
       }
       audio.play().then(() => {
+        setHasAudioUnlocked(true);
         if (isUserAdminRef.current && syncRef.current) {
           audioEngine.attachMediaElement(audio);
           const liveStream = audioEngine.getOutputStream();
@@ -972,13 +994,14 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
             syncRef.current.streamAudio(liveStream);
           }
         }
-      }).catch(() => {
-        // Handled by unlock overlay / user interaction
+      }).catch((err) => {
+        console.warn('HTML5 audio play blocked by browser:', err);
+        setHasAudioUnlocked(false);
       });
     } else {
       audio.pause();
     }
-  }, [isPlaying, activeTrack]);
+  }, [isPlaying, activeTrack, audioUnlockVersion]);
 
   // Sync play/pause with remote live WebRTC stream (only when no local audio file is playing)
   useEffect(() => {
@@ -1194,6 +1217,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
       return;
     }
     const ytId = data.url ? getYouTubeVideoId(data.url) : null;
+    const sourceType = ytId ? 'youtube' : data.sourceType;
 
     const newTrk: RealTrack = {
       id: `trk-${Date.now()}`,
@@ -1202,17 +1226,20 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
       duration: data.duration,
       durationSeconds: data.durationSeconds,
       addedBy: effectiveUserName,
-      sourceType: data.sourceType,
+      sourceType: sourceType,
       url: data.url,
       file: data.file,
       youtubeId: ytId,
     };
+
+    const isFirstTrack = tracksRef.current.length === 0;
 
     setTracks((prev) => {
       const nextList = [...prev, newTrk];
       if (prev.length === 0) {
         setCurrentTrackIndex(0);
         setCurrentTime(0);
+        setExternalSeekTime(0);
         setIsPlaying(true);
       }
       return nextList;
@@ -1230,7 +1257,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
         senderPeerId: syncRef.current.peerId,
       });
 
-      if (tracks.length === 0) {
+      if (isFirstTrack) {
         syncRef.current.broadcast({
           type: 'AUDIO_PLAY',
           trackId: newTrk.id,
@@ -1391,7 +1418,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
           senderPeerId: syncRef.current.peerId,
         });
 
-        if (tracks.length === 0) {
+        if (tracksRef.current.length === 0) {
           syncRef.current.broadcast({
             type: 'AUDIO_PLAY',
             trackId: newTrk.id,
@@ -1424,7 +1451,21 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
     <div className="flex flex-col h-[100dvh] w-screen overflow-hidden bg-[#0a0a0b] text-[#ededed] select-none font-sans">
       {/* Real HTML5 Audio Element for local and streaming audio */}
       {activeTrack?.url && activeTrack.sourceType !== 'youtube' && (
-        <audio ref={audioRef} src={activeTrack.url} />
+        <audio
+          ref={audioRef}
+          src={activeTrack.url}
+          preload="auto"
+          playsInline
+          onCanPlay={() => {
+            if (isPlayingRef.current && audioRef.current && audioRef.current.paused) {
+              audioRef.current.play().then(() => {
+                setHasAudioUnlocked(true);
+              }).catch(() => {
+                setHasAudioUnlocked(false);
+              });
+            }
+          }}
+        />
       )}
 
       {/* 1. TOP STATUS BAR (Clean, modern, and uncluttered on mobile) */}
@@ -1513,6 +1554,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
         <div
           onClick={() => {
             audioEngine.resume();
+            setAudioUnlockVersion((v) => v + 1);
             if (audioRef.current && activeTrack?.url) {
               audioRef.current.play().catch(() => {});
             }
@@ -1823,7 +1865,9 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
 
         {/* CENTER COLUMN (Search prompt, Real track queue, real player) */}
         <main className={`flex-1 bg-[#09090a] flex-col overflow-y-auto ${
-          mobileTab === 'music' ? 'flex' : 'hidden lg:flex'
+          mobileTab === 'music'
+            ? 'flex'
+            : 'max-lg:fixed max-lg:-top-[9999px] max-lg:-left-[9999px] max-lg:opacity-0 max-lg:pointer-events-none max-lg:w-0 max-lg:h-0 max-lg:overflow-hidden lg:flex'
         }`}>
           {/* Top Search / Command Bar */}
           <div className="p-3 sm:p-6 pb-2">
@@ -1888,6 +1932,8 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
                 volume={effectiveVolume}
                 isMuted={isMuted}
                 seekTime={externalSeekTime}
+                unlockedTrigger={audioUnlockVersion}
+                onAutoplayBlocked={() => setHasAudioUnlocked(false)}
                 onTimeUpdate={(curr, dur) => {
                   if (Math.abs(curr - lastAudioTimeRef.current) >= 0.25) {
                     lastAudioTimeRef.current = curr;
@@ -1900,27 +1946,32 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
                 onStateChange={(state) => {
                   if (state === 'playing') {
                     setIsPlaying(true);
-                    if (syncRef.current && !isSyncingFromRemote.current) {
+                    setHasAudioUnlocked(true);
+                    if (isUserAdminRef.current && syncRef.current && !isSyncingFromRemote.current) {
                       syncRef.current.broadcast({
                         type: 'AUDIO_PLAY',
                         trackId: activeTrack.id,
-                        currentTime,
+                        currentTime: lastAudioTimeRef.current > 0 ? lastAudioTimeRef.current : 0,
                         sentAt: Date.now(),
                         serverTimestamp: Date.now(),
                       });
                     }
                   } else if (state === 'paused') {
-                    setIsPlaying(false);
-                    if (syncRef.current && !isSyncingFromRemote.current) {
-                      syncRef.current.broadcast({
-                        type: 'AUDIO_PAUSE',
-                        trackId: activeTrack.id,
-                        currentTime,
-                        sentAt: Date.now(),
-                      });
+                    if (!isSyncingFromRemote.current) {
+                      setIsPlaying(false);
+                      if (isUserAdminRef.current && syncRef.current) {
+                        syncRef.current.broadcast({
+                          type: 'AUDIO_PAUSE',
+                          trackId: activeTrack.id,
+                          currentTime: lastAudioTimeRef.current > 0 ? lastAudioTimeRef.current : 0,
+                          sentAt: Date.now(),
+                        });
+                      }
                     }
                   } else if (state === 'ended') {
-                    handleNextTrack();
+                    if (isUserAdminRef.current) {
+                      handleNextTrack();
+                    }
                   }
                 }}
               />
@@ -2154,7 +2205,9 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
             <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
               <SpatialAudioTab
                 userName={effectiveUserName}
-                isHost={true}
+                isHost={isRoomHost}
+                connectedPeers={connectedPeers}
+                adminPeerIds={adminPeerIds}
                 onSpatialChange={handleSpatialChange}
               />
             </div>
