@@ -136,6 +136,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
   const currentRoomNameRef = useRef<string>(currentRoomName);
   const isRoomLockedRef = useRef<boolean>(isRoomLocked);
   const handleRemoteSyncEventRef = useRef<(event: SyncEvent) => void>(() => {});
+  const checkAndPromoteNextAdminRef = useRef<(peers: Peer[]) => void>(() => {});
 
   isUserAdminRef.current = isUserAdmin;
   playbackPermissionRef.current = playbackPermission;
@@ -402,8 +403,14 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
     const amAdmin = isUserAdminRef.current;
 
     if (amAdmin && peers.length > 0 && syncRef.current) {
-      // Transfer admin to first remaining peer
-      const nextAdmin = peers[0];
+      // Transfer admin to the member next in line deterministically by join time
+      const sortedPeers = [...peers].sort((a, b) => {
+        const timeA = a.joinedAt || 0;
+        const timeB = b.joinedAt || 0;
+        if (timeA !== timeB) return timeA - timeB;
+        return a.id.localeCompare(b.id);
+      });
+      const nextAdmin = sortedPeers[0];
       syncRef.current.broadcast({
         type: 'ADMIN_TRANSFER',
         newAdminPeerId: nextAdmin.id,
@@ -565,6 +572,15 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
       }
     });
 
+    // Preload YouTube Iframe API script early for instant link playback
+    if (typeof window !== 'undefined' && !document.getElementById('youtube-iframe-api')) {
+      const tag = document.createElement('script');
+      tag.id = 'youtube-iframe-api';
+      tag.src = 'https://www.youtube.com/iframe_api';
+      const firstScriptTag = document.getElementsByTagName('script')[0];
+      firstScriptTag?.parentNode?.insertBefore(tag, firstScriptTag);
+    }
+
     // Clock calibration interval, stale peer cleanup, and periodic playback time-lock
     let syncTickCount = 0;
     const statsInterval = setInterval(() => {
@@ -583,11 +599,12 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
         });
       }
 
-      // Clean up stale peers older than 45 seconds (prevents mobile background timer throttling from dropping peers)
+      // Clean up stale peers older than 12 seconds and automatically promote successor if creator disconnected
       const now = performance.now();
       setConnectedPeers((prev) => {
-        const alive = prev.filter((p) => now - p.lastSeen < 45000);
+        const alive = prev.filter((p) => now - p.lastSeen < 12000);
         connectedPeersRef.current = alive;
+        checkAndPromoteNextAdminRef.current(alive);
         return alive;
       });
     }, 1250);
@@ -665,6 +682,91 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
     };
   }, [effectiveUserName, isRoomHost]);
 
+  // Deterministic automatic admin promotion when creator / active admin disconnects
+  const checkAndPromoteNextAdmin = (currentPeers: Peer[]) => {
+    const myPeerId = syncRef.current?.peerId;
+    if (!myPeerId) return;
+
+    // 1. Gather all currently alive participants (self + alive remote peers)
+    const selfMember: Peer = {
+      id: myPeerId,
+      name: effectiveUserName,
+      isHost: isRoomHost,
+      isAdmin: isUserAdminRef.current,
+      lastSeen: performance.now(),
+      deviceType: 'Current Browser',
+      joinedAt: syncRef.current?.joinedAt || Date.now(),
+    };
+
+    const allAlive: Peer[] = [selfMember, ...currentPeers];
+
+    // 2. Check if an active host or admin is currently present in the room
+    const hasActiveHost = allAlive.some((p) => p.isHost && (p.id === myPeerId ? isRoomHost : true));
+    const hasActiveAdmin = allAlive.some(
+      (p) => (p.isAdmin || adminPeerIdsRef.current.includes(p.id)) && (p.id === myPeerId ? isUserAdminRef.current : true)
+    );
+
+    // If an active creator or admin is still present, no succession is needed
+    if (hasActiveHost || hasActiveAdmin) return;
+
+    // 3. Creator/Admin has disconnected! Find the member next in line deterministically
+    // Sort all alive members by join timestamp ascending (earliest joined member gets admin)
+    const sortedAlive = [...allAlive].sort((a, b) => {
+      const timeA = a.joinedAt || 0;
+      const timeB = b.joinedAt || 0;
+      if (timeA !== timeB) return timeA - timeB;
+      return a.id.localeCompare(b.id);
+    });
+
+    const nextAdmin = sortedAlive[0];
+    if (!nextAdmin) return;
+
+    // 4. If this client is the successor, take over as Admin
+    if (nextAdmin.id === myPeerId) {
+      setPromotedToAdmin(true);
+      const nextAdmins = [myPeerId];
+      setAdminPeerIds(nextAdmins);
+      adminPeerIdsRef.current = nextAdmins;
+      isUserAdminRef.current = true;
+
+      if (syncRef.current) {
+        syncRef.current.broadcast({
+          type: 'ADMIN_TRANSFER',
+          newAdminPeerId: myPeerId,
+          newAdminName: effectiveUserName,
+        });
+        syncRef.current.broadcast({
+          type: 'PERMISSIONS_UPDATE',
+          playbackPermission: playbackPermissionRef.current,
+          addMusicPermission: addMusicPermissionRef.current,
+          adminPeerIds: nextAdmins,
+        });
+      }
+
+      const chatNotification: ChatMessage = {
+        id: `msg-succ-${Date.now()}`,
+        sender: 'HostelSync',
+        text: `👑 Creator disconnected. ${effectiveUserName} is now the Admin of this room!`,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isSelf: false,
+      };
+      setMessages((msgs) => [...msgs, chatNotification]);
+      if (syncRef.current) {
+        syncRef.current.broadcast({
+          type: 'CHAT_MESSAGE',
+          message: chatNotification,
+        });
+      }
+    } else {
+      // Another peer is next in line: mark them as the expected admin locally
+      const nextAdmins = [nextAdmin.id];
+      setAdminPeerIds(nextAdmins);
+      adminPeerIdsRef.current = nextAdmins;
+    }
+  };
+
+  checkAndPromoteNextAdminRef.current = checkAndPromoteNextAdmin;
+
   // Handle incoming real-time events from other tabs / devices
   const handleRemoteSyncEvent = (event: SyncEvent) => {
     switch (event.type) {
@@ -675,11 +777,10 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
 
         if (isMe) {
           setPromotedToAdmin(true);
+          isUserAdminRef.current = true;
         }
-        setAdminPeerIds((prev) => {
-          const updated = [...prev, event.newAdminPeerId];
-          return Array.from(new Set(updated));
-        });
+        setAdminPeerIds([event.newAdminPeerId]);
+        adminPeerIdsRef.current = [event.newAdminPeerId];
 
         setMessages((prev) => [
           ...prev,
@@ -823,7 +924,13 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
           if (exists) {
             nextList = prev.map((p) =>
               p.id === event.peerId
-                ? { ...p, name: event.name, isHost: event.isHost, lastSeen: performance.now() }
+                ? {
+                    ...p,
+                    name: event.name,
+                    isHost: event.isHost,
+                    joinedAt: event.joinedAt || p.joinedAt || Date.now(),
+                    lastSeen: performance.now(),
+                  }
                 : p
             );
           } else {
@@ -833,6 +940,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
                 id: event.peerId,
                 name: event.name,
                 isHost: event.isHost,
+                joinedAt: event.joinedAt || Date.now(),
                 lastSeen: performance.now(),
                 deviceType: 'Desktop Browser',
               },
@@ -850,7 +958,13 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
           if (exists) {
             nextList = prev.map((p) =>
               p.id === event.peerId
-                ? { ...p, name: event.name || p.name, isHost: event.isHost !== undefined ? event.isHost : p.isHost, lastSeen: performance.now() }
+                ? {
+                    ...p,
+                    name: event.name || p.name,
+                    isHost: event.isHost !== undefined ? event.isHost : p.isHost,
+                    joinedAt: event.joinedAt || p.joinedAt || Date.now(),
+                    lastSeen: performance.now(),
+                  }
                 : p
             );
           } else {
@@ -860,6 +974,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
                 id: event.peerId,
                 name: event.name || 'Room Member',
                 isHost: Boolean(event.isHost),
+                joinedAt: event.joinedAt || Date.now(),
                 lastSeen: performance.now(),
                 deviceType: 'Desktop Browser',
               },
@@ -880,34 +995,19 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
         setConnectedPeers((prev) => {
           const remaining = prev.filter((p) => p.id !== event.peerId);
           connectedPeersRef.current = remaining;
-
-          // If departing peer was an admin, automatically transfer admin to first remaining peer deterministically
-          if (!isUserAdminRef.current && remaining.length > 0 && remaining[0].id === syncRef.current?.peerId) {
-            const hasAliveAdmin = remaining.some((p) => adminPeerIdsRef.current.includes(p.id) || p.isHost);
-            if (!hasAliveAdmin) {
-              setPromotedToAdmin(true);
-              const nextAdmins = [syncRef.current.peerId];
-              setAdminPeerIds(nextAdmins);
-              syncRef.current.broadcast({
-                type: 'PERMISSIONS_UPDATE',
-                playbackPermission: playbackPermissionRef.current,
-                addMusicPermission: addMusicPermissionRef.current,
-                adminPeerIds: nextAdmins,
-              });
-              setMessages((msgs) => [
-                ...msgs,
-                {
-                  id: `msg-succ-${Date.now()}`,
-                  sender: 'HostelSync',
-                  text: '👑 Previous host left. You are now the Admin of this room!',
-                  time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                  isSelf: false,
-                },
-              ]);
-            }
-          }
+          checkAndPromoteNextAdmin(remaining);
           return remaining;
         });
+        break;
+      }
+      case 'TRACK_UPDATE': {
+        setTracks((prev) =>
+          prev.map((t) =>
+            t.id === event.trackId
+              ? { ...t, title: event.title, artist: event.artist }
+              : t
+          )
+        );
         break;
       }
       case 'AUDIO_PLAY': {
@@ -1522,6 +1622,29 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
         message: chatNotification,
       });
     }
+
+    // If YouTube link had a placeholder/loading title, fetch real metadata in background
+    if (ytId && (!data.title || data.title === 'YouTube Track' || data.title.startsWith('YouTube Track ('))) {
+      fetchYouTubeVideoInfo(ytId)
+        .then((info) => {
+          if (info && info.title) {
+            setTracks((prev) =>
+              prev.map((t) =>
+                t.id === newTrk.id ? { ...t, title: info.title, artist: info.author } : t
+              )
+            );
+            if (syncRef.current) {
+              syncRef.current.broadcast({
+                type: 'TRACK_UPDATE',
+                trackId: newTrk.id,
+                title: info.title,
+                artist: info.author,
+              });
+            }
+          }
+        })
+        .catch(() => {});
+    }
   };
 
   // Real-time Chat message send
@@ -1582,33 +1705,23 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
         t.artist.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
-  // Handle instant addition when pressing Enter on a YouTube or audio link
-  const handleSearchKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
+  // Handle instant addition when pressing Enter on a YouTube or audio link (0ms delay)
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== 'Enter') return;
     if (!canAddMusic || (addMusicPermissionRef.current === 'admins' && !isUserAdminRef.current) || !searchQuery.trim()) return;
 
     const query = searchQuery.trim();
     const ytId = getYouTubeVideoId(query);
 
+    // 1. YouTube link or ID
     if (ytId) {
       e.preventDefault();
       setSearchQuery('');
 
-      let title = 'YouTube Track';
-      let artist = 'YouTube';
-
-      try {
-        const info = await fetchYouTubeVideoInfo(ytId);
-        if (info) {
-          title = info.title;
-          artist = info.author;
-        }
-      } catch {}
-
       const newTrk: RealTrack = {
         id: `trk-yt-${Date.now()}`,
-        title,
-        artist,
+        title: `YouTube Track (${ytId})`,
+        artist: 'YouTube',
         duration: '03:45',
         durationSeconds: 225,
         addedBy: effectiveUserName,
@@ -1617,6 +1730,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
         youtubeId: ytId,
       };
 
+      // Play instantly without waiting for any network round trips
       setTracks((prev) => {
         const nextList = [...prev, newTrk];
         if (prev.length === 0) {
@@ -1649,7 +1763,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
         const chatNotification: ChatMessage = {
           id: `msg-add-${Date.now()}`,
           sender: 'HostelSync',
-          text: `${effectiveUserName} added "${title}" via YouTube link`,
+          text: `${effectiveUserName} added a YouTube link to queue`,
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           isSelf: false,
         };
@@ -1659,6 +1773,80 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
           message: chatNotification,
         });
       }
+
+      // Asynchronously fetch video title & artist in the background and update seamlessly
+      fetchYouTubeVideoInfo(ytId)
+        .then((info) => {
+          if (info && info.title) {
+            setTracks((prev) =>
+              prev.map((t) =>
+                t.id === newTrk.id ? { ...t, title: info.title, artist: info.author } : t
+              )
+            );
+            if (syncRef.current) {
+              syncRef.current.broadcast({
+                type: 'TRACK_UPDATE',
+                trackId: newTrk.id,
+                title: info.title,
+                artist: info.author,
+              });
+            }
+          }
+        })
+        .catch(() => {});
+      return;
+    }
+
+    // 2. Direct Web Audio link (mp3, wav, stream, soundcloud)
+    if (query.startsWith('http://') || query.startsWith('https://')) {
+      e.preventDefault();
+      setSearchQuery('');
+
+      const isSc = query.toLowerCase().includes('soundcloud.com');
+      const filename = query.split('/').pop()?.split('?')[0] || 'Shared Stream';
+      const cleanTitle = filename.replace(/\.(mp3|wav|ogg|m4a|aac)$/i, '');
+
+      const newTrk: RealTrack = {
+        id: `trk-link-${Date.now()}`,
+        title: cleanTitle || (isSc ? 'SoundCloud Track' : 'Web Audio Stream'),
+        artist: isSc ? 'SoundCloud' : 'Web Stream',
+        duration: '03:45',
+        durationSeconds: 225,
+        addedBy: effectiveUserName,
+        sourceType: isSc ? 'soundcloud' : 'stream',
+        url: query,
+      };
+
+      setTracks((prev) => {
+        const nextList = [...prev, newTrk];
+        if (prev.length === 0) {
+          setCurrentTrackIndex(0);
+          setCurrentTime(0);
+          setExternalSeekTime(0);
+          setIsPlaying(true);
+        }
+        return nextList;
+      });
+
+      if (syncRef.current) {
+        syncRef.current.broadcast({
+          type: 'QUEUE_ADD',
+          track: newTrk,
+          isAdmin: isUserAdminRef.current,
+          senderPeerId: syncRef.current.peerId,
+        });
+
+        if (tracksRef.current.length === 0) {
+          syncRef.current.broadcast({
+            type: 'AUDIO_PLAY',
+            trackId: newTrk.id,
+            currentTime: 0,
+            sentAt: Date.now(),
+            serverTimestamp: Date.now(),
+          });
+        }
+      }
+      return;
     }
   };
 
@@ -2279,7 +2467,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
           {activeTrack?.sourceType === 'youtube' && activeTrack.youtubeId && (
             <div className="px-6 py-3 flex flex-col items-center justify-center">
               <YouTubePlayer
-                key={`yt-${activeTrack.id}-${activeTrack.youtubeId}`}
+                key="main-room-yt-player"
                 videoId={activeTrack.youtubeId}
                 isPlaying={isPlaying}
                 volume={effectiveVolume}

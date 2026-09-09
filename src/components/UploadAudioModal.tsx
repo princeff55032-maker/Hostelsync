@@ -196,9 +196,23 @@ export function UploadAudioModal({
     if (ytId || linkPlatform === 'youtube') detectedPlatform = 'youtube';
     else if (linkPlatform === 'soundcloud' || trimmed.toLowerCase().includes('soundcloud.com')) detectedPlatform = 'soundcloud';
 
+    const effectiveTitle =
+      linkTitle && linkTitle !== 'Loading video title...'
+        ? linkTitle.trim()
+        : detectedPlatform === 'youtube'
+        ? (ytId ? `YouTube Track (${ytId})` : 'YouTube Track')
+        : 'Shared Web Stream';
+
+    const effectiveArtist =
+      linkArtist && linkArtist !== 'YouTube'
+        ? linkArtist.trim()
+        : detectedPlatform === 'youtube'
+        ? 'YouTube'
+        : 'Web Stream';
+
     onAddTrack({
-      title: linkTitle.trim() || (detectedPlatform === 'youtube' ? 'YouTube Track' : 'Shared Web Stream'),
-      artist: linkArtist.trim() || (detectedPlatform === 'youtube' ? 'YouTube' : 'Web Stream'),
+      title: effectiveTitle,
+      artist: effectiveArtist,
       duration: '03:45',
       durationSeconds: 225,
       sourceType: detectedPlatform,

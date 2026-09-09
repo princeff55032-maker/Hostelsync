@@ -10,6 +10,7 @@ export interface Peer {
   isAdmin?: boolean;
   lastSeen: number;
   deviceType: string;
+  joinedAt?: number;
 }
 
 export interface TrackFileData {
@@ -24,14 +25,15 @@ export interface TrackFileData {
 }
 
 export type SyncEvent =
-  | { type: 'PEER_PING'; peerId: string; name: string; isHost: boolean; timestamp: number }
-  | { type: 'PEER_PONG'; peerId: string; name: string; isHost?: boolean; origTimestamp: number }
+  | { type: 'PEER_PING'; peerId: string; name: string; isHost: boolean; timestamp: number; joinedAt?: number }
+  | { type: 'PEER_PONG'; peerId: string; name: string; isHost?: boolean; origTimestamp: number; joinedAt?: number }
   | { type: 'PEER_LEAVE'; peerId: string }
   | { type: 'AUDIO_PLAY'; trackId: string; currentTime: number; serverTimestamp?: number; sentAt?: number }
   | { type: 'AUDIO_PAUSE'; trackId: string; currentTime: number; sentAt?: number }
   | { type: 'AUDIO_SEEK'; currentTime: number; isManual?: boolean; sentAt?: number }
   | { type: 'QUEUE_ADD'; track: any; isAdmin?: boolean; senderPeerId?: string }
   | { type: 'QUEUE_CLEAR'; isAdmin?: boolean }
+  | { type: 'TRACK_UPDATE'; trackId: string; title: string; artist: string }
   | { type: 'CHAT_MESSAGE'; message: any }
   | {
       type: 'PERMISSIONS_UPDATE';
@@ -91,6 +93,7 @@ export class RoomSync {
   public peerId: string;
   public peerName: string;
   public isHost: boolean;
+  public joinedAt: number;
   private onEventCallback: ((event: SyncEvent) => void) | null = null;
   private onStreamCallback: ((stream: MediaStream, peerId: string) => void) | null = null;
   private onFileCallback: ((fileData: TrackFileData) => void) | null = null;
@@ -106,6 +109,7 @@ export class RoomSync {
     this.roomCode = roomCode;
     this.peerName = peerName || 'Resident';
     this.isHost = isHost;
+    this.joinedAt = Date.now();
     this.peerId = `peer_${Math.random().toString(36).substring(2, 9)}`;
 
     if (typeof window !== 'undefined') {
@@ -166,6 +170,7 @@ export class RoomSync {
             peerId: this.peerId,
             name: this.peerName,
             isHost: this.isHost,
+            joinedAt: this.joinedAt,
             timestamp: performance.now(),
           });
 
@@ -246,6 +251,7 @@ export class RoomSync {
       peerId: this.peerId,
       name: this.peerName,
       isHost: this.isHost,
+      joinedAt: this.joinedAt,
       timestamp: performance.now(),
     });
 
@@ -273,6 +279,7 @@ export class RoomSync {
         peerId: this.peerId,
         name: this.peerName,
         isHost: this.isHost,
+        joinedAt: this.joinedAt,
         timestamp: performance.now(),
       });
     }, 2500);
@@ -366,6 +373,7 @@ export class RoomSync {
           peerId: this.peerId,
           name: this.peerName,
           isHost: this.isHost,
+          joinedAt: this.joinedAt,
           origTimestamp: event.timestamp,
         });
       }

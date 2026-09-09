@@ -72,7 +72,7 @@ export function YouTubePlayer({
         setIsApiReady(true);
         clearInterval(pollInterval);
       }
-    }, 150);
+    }, 50);
 
     return () => clearInterval(pollInterval);
   }, []);
@@ -111,13 +111,14 @@ export function YouTubePlayer({
       const player = new window.YT.Player(playerElement, {
         videoId,
         playerVars: {
-          autoplay: isPlaying ? 1 : 0,
+          autoplay: 1,
           controls: 1,
           rel: 0,
           modestbranding: 1,
           playsinline: 1,
           enablejsapi: 1,
           fs: 1,
+          origin: typeof window !== 'undefined' ? window.location.origin : undefined,
         },
         events: {
           onReady: (event: any) => {
