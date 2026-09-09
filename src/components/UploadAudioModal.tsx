@@ -13,6 +13,7 @@ import {
   Globe,
   Radio,
   Loader2,
+  Lock,
 } from 'lucide-react';
 import { getYouTubeVideoId, fetchYouTubeVideoInfo } from '@/lib/youtube';
 
@@ -31,6 +32,7 @@ interface UploadAudioModalProps {
   onClose: () => void;
   onAddTrack: (track: AddedTrackData) => void;
   userName: string;
+  canAddMusic?: boolean;
 }
 
 export function UploadAudioModal({
@@ -38,6 +40,7 @@ export function UploadAudioModal({
   onClose,
   onAddTrack,
   userName,
+  canAddMusic = true,
 }: UploadAudioModalProps) {
   const [activeTab, setActiveTab] = useState<'device' | 'link'>('device');
 
@@ -159,6 +162,10 @@ export function UploadAudioModal({
   // Submit device track
   const handleSubmitDevice = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canAddMusic) {
+      alert('Adding music is currently restricted to room Admins.');
+      return;
+    }
     if (!selectedFile) return;
 
     onAddTrack({
@@ -177,6 +184,10 @@ export function UploadAudioModal({
   // Submit link track
   const handleSubmitLink = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canAddMusic) {
+      alert('Adding music is currently restricted to room Admins.');
+      return;
+    }
     if (!linkUrl.trim()) return;
 
     let detectedPlatform: 'youtube' | 'soundcloud' | 'stream' = 'stream';
@@ -229,9 +240,20 @@ export function UploadAudioModal({
             Upload Music
           </h3>
         </div>
-        <p className="text-xs text-neutral-400 mb-4">
+        <p className="text-xs text-neutral-400 mb-3">
           Stream direct from your local files or add via YouTube/web link.
         </p>
+
+        {/* Lock Banner if permissions restricted to admins */}
+        {!canAddMusic && (
+          <div className="mb-4 px-3.5 py-2.5 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-300 text-xs flex items-center gap-2 animate-in fade-in">
+            <Lock className="w-4 h-4 shrink-0 text-amber-400" />
+            <div>
+              <span className="font-semibold block">Adding music is locked</span>
+              <span className="text-[11px] text-amber-400/80">Only room Admins are permitted to add music right now.</span>
+            </div>
+          </div>
+        )}
 
         {/* Tab Navigation */}
         <div className="grid grid-cols-2 p-1 bg-neutral-950 border border-neutral-800 rounded-lg text-xs mb-4">
@@ -369,10 +391,14 @@ export function UploadAudioModal({
               </button>
               <button
                 type="submit"
-                disabled={!selectedFile}
-                className="px-4 py-1.5 bg-white text-black font-medium rounded-md hover:bg-neutral-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                disabled={!selectedFile || !canAddMusic}
+                className={`px-4 py-1.5 font-medium rounded-md transition-colors ${
+                  !selectedFile || !canAddMusic
+                    ? 'bg-neutral-800 text-neutral-500 opacity-50 cursor-not-allowed'
+                    : 'bg-white text-black hover:bg-neutral-200 cursor-pointer'
+                }`}
               >
-                Add to Room Queue
+                {!canAddMusic ? 'Upload Locked' : 'Add to Room Queue'}
               </button>
             </div>
           </form>
@@ -393,7 +419,10 @@ export function UploadAudioModal({
                   value={linkUrl}
                   onChange={(e) => handleUrlChange(e.target.value)}
                   autoFocus
-                  className="w-full bg-neutral-800 border border-neutral-700 focus:border-white rounded-md px-3 py-2 text-white outline-none placeholder:text-neutral-500 text-xs"
+                  disabled={!canAddMusic}
+                  className={`w-full bg-neutral-800 border rounded-md px-3 py-2 text-white outline-none placeholder:text-neutral-500 text-xs ${
+                    !canAddMusic ? 'border-neutral-800 opacity-60 cursor-not-allowed' : 'border-neutral-700 focus:border-white'
+                  }`}
                 />
               </div>
               <div className="flex items-center gap-2 mt-1.5 text-[11px] text-neutral-500">
@@ -415,8 +444,11 @@ export function UploadAudioModal({
                 required
                 placeholder="e.g. Synthwave Study Session"
                 value={linkTitle}
+                disabled={!canAddMusic}
                 onChange={(e) => setLinkTitle(e.target.value)}
-                className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2.5 py-1.5 text-white outline-none focus:border-white"
+                className={`w-full bg-neutral-800 border rounded-md px-2.5 py-1.5 text-white outline-none ${
+                  !canAddMusic ? 'border-neutral-800 opacity-60 cursor-not-allowed' : 'border-neutral-700 focus:border-white'
+                }`}
               />
             </div>
 
@@ -426,8 +458,11 @@ export function UploadAudioModal({
                 type="text"
                 placeholder="e.g. Lofi Girl / YouTube"
                 value={linkArtist}
+                disabled={!canAddMusic}
                 onChange={(e) => setLinkArtist(e.target.value)}
-                className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2.5 py-1.5 text-white outline-none focus:border-white"
+                className={`w-full bg-neutral-800 border rounded-md px-2.5 py-1.5 text-white outline-none ${
+                  !canAddMusic ? 'border-neutral-800 opacity-60 cursor-not-allowed' : 'border-neutral-700 focus:border-white'
+                }`}
               />
             </div>
 
@@ -442,10 +477,14 @@ export function UploadAudioModal({
               </button>
               <button
                 type="submit"
-                disabled={!linkUrl.trim()}
-                className="px-4 py-1.5 bg-white text-black font-medium rounded-md hover:bg-neutral-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                disabled={!linkUrl.trim() || !canAddMusic}
+                className={`px-4 py-1.5 font-medium rounded-md transition-colors ${
+                  !linkUrl.trim() || !canAddMusic
+                    ? 'bg-neutral-800 text-neutral-500 opacity-50 cursor-not-allowed'
+                    : 'bg-white text-black hover:bg-neutral-200 cursor-pointer'
+                }`}
               >
-                Add Link to Queue
+                {!canAddMusic ? 'Upload Locked' : 'Add Link to Queue'}
               </button>
             </div>
           </form>

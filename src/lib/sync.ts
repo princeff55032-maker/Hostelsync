@@ -30,8 +30,8 @@ export type SyncEvent =
   | { type: 'AUDIO_PLAY'; trackId: string; currentTime: number; serverTimestamp?: number; sentAt?: number }
   | { type: 'AUDIO_PAUSE'; trackId: string; currentTime: number; sentAt?: number }
   | { type: 'AUDIO_SEEK'; currentTime: number; isManual?: boolean; sentAt?: number }
-  | { type: 'QUEUE_ADD'; track: any }
-  | { type: 'QUEUE_CLEAR' }
+  | { type: 'QUEUE_ADD'; track: any; isAdmin?: boolean; senderPeerId?: string }
+  | { type: 'QUEUE_CLEAR'; isAdmin?: boolean }
   | { type: 'CHAT_MESSAGE'; message: any }
   | {
       type: 'PERMISSIONS_UPDATE';

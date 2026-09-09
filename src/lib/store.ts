@@ -170,6 +170,8 @@ export function useHostelStore() {
       setHostels(updated);
       setActiveHostelCode(cleanCode);
       try {
+        sessionStorage.removeItem(`hostelsync_creator_${cleanCode}`);
+        sessionStorage.removeItem(`hostelsync_creator_${raw}`);
         localStorage.setItem(STORAGE_KEYS.HOSTELS, JSON.stringify(updated));
         localStorage.setItem(STORAGE_KEYS.ACTIVE_CODE, cleanCode);
       } catch {}

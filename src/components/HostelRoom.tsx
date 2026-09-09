@@ -135,13 +135,49 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
   const handleTogglePlaybackPermission = (val: 'everyone' | 'admins') => {
     if (!isUserAdmin) return;
     setPlaybackPermission(val);
+    playbackPermissionRef.current = val;
     broadcastPermissions(val, addMusicPermission, adminPeerIds);
+
+    const chatNotification: ChatMessage = {
+      id: `msg-perm-play-${Date.now()}`,
+      sender: 'HostelSync',
+      text: val === 'admins'
+        ? '🔒 Playback controls (play/pause/skip) are now restricted to Admins only.'
+        : '🔓 Playback controls are now open to Everyone.',
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      isSelf: false,
+    };
+    setMessages((prev) => [...prev, chatNotification]);
+    if (syncRef.current) {
+      syncRef.current.broadcast({
+        type: 'CHAT_MESSAGE',
+        message: chatNotification,
+      });
+    }
   };
 
   const handleToggleAddMusicPermission = (val: 'everyone' | 'admins') => {
     if (!isUserAdmin) return;
     setAddMusicPermission(val);
+    addMusicPermissionRef.current = val;
     broadcastPermissions(playbackPermission, val, adminPeerIds);
+
+    const chatNotification: ChatMessage = {
+      id: `msg-perm-add-${Date.now()}`,
+      sender: 'HostelSync',
+      text: val === 'admins'
+        ? '🔒 Music addition is now restricted to Admins only.'
+        : '🔓 Music addition is now open to Everyone.',
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      isSelf: false,
+    };
+    setMessages((prev) => [...prev, chatNotification]);
+    if (syncRef.current) {
+      syncRef.current.broadcast({
+        type: 'CHAT_MESSAGE',
+        message: chatNotification,
+      });
+    }
   };
 
   const handleTogglePeerAdmin = (peerId: string) => {
@@ -782,6 +818,11 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
         break;
       }
       case 'QUEUE_ADD': {
+        // Enforce permission: reject if room is locked to admins and sender is not an admin
+        if (addMusicPermissionRef.current === 'admins' && !event.isAdmin) {
+          console.warn('Rejected QUEUE_ADD from non-admin peer');
+          break;
+        }
         setTracks((prev) => {
           const already = prev.find((t) => t.id === event.track.id);
           if (already) return prev;
@@ -790,6 +831,10 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
         break;
       }
       case 'QUEUE_CLEAR': {
+        if (!event.isAdmin && !isUserAdminRef.current) {
+          console.warn('Rejected QUEUE_CLEAR from non-admin peer');
+          break;
+        }
         setTracks([]);
         setIsPlaying(false);
         break;
@@ -1104,7 +1149,10 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
 
   // Add newly uploaded device file or link to room queue
   const handleAddTrack = (data: AddedTrackData) => {
-    if (!canAddMusic) return;
+    if (!canAddMusic || (addMusicPermissionRef.current === 'admins' && !isUserAdminRef.current)) {
+      alert('Adding music is currently restricted to room Admins.');
+      return;
+    }
     const ytId = data.url ? getYouTubeVideoId(data.url) : null;
 
     const newTrk: RealTrack = {
@@ -1138,6 +1186,8 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
           ...newTrk,
           file: undefined, // strip raw File object for JSON broadcast
         },
+        isAdmin: isUserAdminRef.current,
+        senderPeerId: syncRef.current.peerId,
       });
 
       if (tracks.length === 0) {
@@ -1250,7 +1300,7 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
   // Handle instant addition when pressing Enter on a YouTube or audio link
   const handleSearchKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== 'Enter') return;
-    if (!canAddMusic || !searchQuery.trim()) return;
+    if (!canAddMusic || (addMusicPermissionRef.current === 'admins' && !isUserAdminRef.current) || !searchQuery.trim()) return;
 
     const query = searchQuery.trim();
     const ytId = getYouTubeVideoId(query);
@@ -1297,6 +1347,8 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
         syncRef.current.broadcast({
           type: 'QUEUE_ADD',
           track: newTrk,
+          isAdmin: isUserAdminRef.current,
+          senderPeerId: syncRef.current.peerId,
         });
 
         if (tracks.length === 0) {
@@ -1828,14 +1880,24 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
           <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-6 pb-28 lg:pb-8 text-center">
             {tracks.length === 0 ? (
               <div className="flex flex-col items-center animate-in fade-in duration-200">
-                <p className="text-xs text-neutral-400 mb-4 font-medium">No tracks yet</p>
+                <p className="text-xs text-neutral-400 mb-4 font-medium">
+                  {canAddMusic ? 'No tracks yet' : 'No tracks yet · Music addition locked by Admin'}
+                </p>
                 <button
                   type="button"
-                  onClick={() => setShowAddTrackModal(true)}
-                  className="px-5 py-2 bg-white text-black hover:bg-neutral-200 font-medium text-xs rounded-full shadow-sm transition-colors cursor-pointer flex items-center gap-1.5"
+                  onClick={() => {
+                    if (canAddMusic) setShowAddTrackModal(true);
+                  }}
+                  disabled={!canAddMusic}
+                  className={`px-5 py-2 font-medium text-xs rounded-full shadow-sm transition-colors flex items-center gap-1.5 ${
+                    canAddMusic
+                      ? 'bg-white text-black hover:bg-neutral-200 cursor-pointer'
+                      : 'bg-neutral-800 text-neutral-500 opacity-60 cursor-not-allowed'
+                  }`}
+                  title={canAddMusic ? 'Upload music' : 'Only Admins can add music'}
                 >
-                  <Upload className="w-3.5 h-3.5 text-black" />
-                  <span>Upload music</span>
+                  {canAddMusic ? <Upload className="w-3.5 h-3.5 text-black" /> : <Lock className="w-3.5 h-3.5 text-neutral-500" />}
+                  <span>{canAddMusic ? 'Upload music' : 'Upload locked'}</span>
                 </button>
               </div>
             ) : (
@@ -1845,27 +1907,37 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
                     Room Queue ({filteredTracks.length})
                   </span>
                   <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowAddTrackModal(true)}
-                      className="text-[11px] text-neutral-300 hover:text-white flex items-center gap-1 cursor-pointer"
-                    >
-                      <Plus className="w-3 h-3" /> Add Track
-                    </button>
-                    <span>·</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTracks([]);
-                        setIsPlaying(false);
-                        if (syncRef.current) {
-                          syncRef.current.broadcast({ type: 'QUEUE_CLEAR' });
-                        }
-                      }}
-                      className="text-[11px] text-neutral-500 hover:text-neutral-300 cursor-pointer"
-                    >
-                      Clear queue
-                    </button>
+                    {canAddMusic ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowAddTrackModal(true)}
+                        className="text-[11px] text-neutral-300 hover:text-white flex items-center gap-1 cursor-pointer"
+                      >
+                        <Plus className="w-3 h-3" /> Add Track
+                      </button>
+                    ) : (
+                      <span className="text-[11px] text-neutral-500 flex items-center gap-1 cursor-not-allowed">
+                        <Lock className="w-3 h-3 text-neutral-600" /> Upload locked
+                      </span>
+                    )}
+                    {isUserAdmin && (
+                      <>
+                        <span>·</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTracks([]);
+                            setIsPlaying(false);
+                            if (syncRef.current) {
+                              syncRef.current.broadcast({ type: 'QUEUE_CLEAR', isAdmin: true });
+                            }
+                          }}
+                          className="text-[11px] text-neutral-500 hover:text-neutral-300 cursor-pointer"
+                        >
+                          Clear queue
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -2278,10 +2350,11 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
 
       {/* Real Upload Audio Modal (Direct Device + YouTube/Web Link) */}
       <UploadAudioModal
-        isOpen={showAddTrackModal}
+        isOpen={showAddTrackModal && canAddMusic}
         onClose={() => setShowAddTrackModal(false)}
         onAddTrack={handleAddTrack}
         userName={effectiveUserName}
+        canAddMusic={canAddMusic}
       />
     </div>
   );
