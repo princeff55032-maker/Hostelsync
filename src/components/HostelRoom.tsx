@@ -384,10 +384,10 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
         });
       }
 
-      // Clean up stale peers older than 5 seconds
+      // Clean up stale peers older than 25 seconds (prevents mobile background timer throttling from dropping peers)
       const now = performance.now();
       setConnectedPeers((prev) => {
-        const alive = prev.filter((p) => now - p.lastSeen < 5000);
+        const alive = prev.filter((p) => now - p.lastSeen < 25000);
         connectedPeersRef.current = alive;
         return alive;
       });
@@ -426,23 +426,44 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
     };
   }, []);
 
-  // Attach window refresh / pagehide event listeners to transfer admin or delete empty room instantly
+  // Attach window refresh / unload listener to transfer admin or delete empty room instantly on tab close/refresh
   useEffect(() => {
     const onBeforeUnload = () => {
       handleLeaveOrRefresh();
     };
-    const onPageHide = () => {
-      handleLeaveOrRefresh();
-    };
 
     window.addEventListener('beforeunload', onBeforeUnload);
-    window.addEventListener('pagehide', onPageHide);
 
     return () => {
       window.removeEventListener('beforeunload', onBeforeUnload);
-      window.removeEventListener('pagehide', onPageHide);
     };
   }, [handleLeaveOrRefresh]);
+
+  // Instantly re-ping and re-sync whenever mobile screen wakes up or tab returns to visibility
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && syncRef.current) {
+        syncRef.current.broadcast({
+          type: 'PEER_PING',
+          peerId: syncRef.current.peerId,
+          name: effectiveUserName,
+          isHost: isRoomHost,
+          timestamp: performance.now(),
+        });
+        if (!isUserAdminRef.current) {
+          syncRef.current.broadcast({
+            type: 'REQUEST_ROOM_STATE',
+            peerId: syncRef.current.peerId,
+          });
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [effectiveUserName, isRoomHost]);
 
   // Handle incoming real-time events from other tabs / devices
   const handleRemoteSyncEvent = (event: SyncEvent) => {
@@ -607,43 +628,33 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
           connectedPeersRef.current = nextList;
           return nextList;
         });
-
-        // ONLY the true admin announces room state to peers, never non-admin peers
-        if (isUserAdminRef.current && syncRef.current && event.peerId !== syncRef.current.peerId) {
-          syncRef.current.broadcast({
-            type: 'ROOM_STATE_SYNC',
-            tracks: tracksRef.current.map((t) => ({
-              ...t,
-              file: undefined,
-              url: t.sourceType === 'device' ? undefined : t.url,
-            })),
-            currentTrackIndex: currentTrackIndexRef.current,
-            isPlaying: isPlayingRef.current,
-            currentTime: audioRef.current?.currentTime ?? currentTimeRef.current,
-            serverTimestamp: Date.now(),
-            sentAt: Date.now(),
-            playbackPermission: playbackPermissionRef.current,
-            addMusicPermission: addMusicPermissionRef.current,
-            adminPeerIds: adminPeerIdsRef.current,
-          });
-
-          // Also, if active track has a local file buffer, re-send it to new peer
-          const curTrk = tracksRef.current[currentTrackIndexRef.current];
-          if (curTrk?.file && syncRef.current) {
-            curTrk.file.arrayBuffer().then((buf) => {
-              syncRef.current?.broadcastFile({
-                trackId: curTrk.id,
-                title: curTrk.title,
-                artist: curTrk.artist,
-                duration: curTrk.duration,
-                durationSeconds: curTrk.durationSeconds,
-                addedBy: curTrk.addedBy,
-                buffer: buf,
-                type: curTrk.file?.type || 'audio/mpeg',
-              });
-            }).catch(() => {});
+        break;
+      }
+      case 'PEER_PONG': {
+        setConnectedPeers((prev) => {
+          const exists = prev.find((p) => p.id === event.peerId);
+          let nextList: Peer[];
+          if (exists) {
+            nextList = prev.map((p) =>
+              p.id === event.peerId
+                ? { ...p, name: event.name || p.name, lastSeen: performance.now() }
+                : p
+            );
+          } else {
+            nextList = [
+              ...prev,
+              {
+                id: event.peerId,
+                name: event.name || 'Room Member',
+                isHost: false,
+                lastSeen: performance.now(),
+                deviceType: 'Desktop Browser',
+              },
+            ];
           }
-        }
+          connectedPeersRef.current = nextList;
+          return nextList;
+        });
         break;
       }
       case 'PERMISSIONS_UPDATE': {
