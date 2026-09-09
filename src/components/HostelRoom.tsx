@@ -1344,6 +1344,35 @@ export function HostelRoom({ hostel, userName, isHost = false, onLeave, onDelete
     }
   }, [isPlaying, activeTrack?.url, activeTrack?.sourceType, volume, isMuted]);
 
+  // Keep HTML5 audio playing even when tab is in background/hidden
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+
+    const handleVisibility = () => {
+      if (!isPlaying) return;
+
+      // Resume local HTML5 audio if it was paused by the browser
+      const audio = audioRef.current;
+      if (audio && audio.src && activeTrack?.sourceType !== 'youtube') {
+        if (audio.paused) {
+          audio.play().catch(() => {});
+        }
+      }
+
+      // Resume remote WebRTC audio stream if it was paused
+      const remoteAudio = remoteAudioRef.current;
+      if (remoteAudio && remoteAudio.srcObject && remoteAudio.paused) {
+        remoteAudio.play().catch(() => {});
+      }
+
+      // Ensure Web Audio context is resumed
+      audioEngine.resume();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [isPlaying, activeTrack?.sourceType]);
+
   const toggleMetronome = () => {
     const next = audioEngine.toggleMetronome((beat) => {
       setMetronomeBeat(beat);

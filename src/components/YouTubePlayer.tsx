@@ -155,6 +155,13 @@ export function YouTubePlayer({
                 onStateChange('playing');
               }
             } else if (event.data === 2) {
+              // If tab is in background/hidden and we are supposed to be playing, keep playing and do NOT broadcast pause!
+              if (typeof document !== 'undefined' && document.hidden && isPlaying) {
+                try {
+                  event.target.playVideo();
+                } catch {}
+                return;
+              }
               // If we are supposed to be playing, but the browser halted unmuted autoplay upon mounting:
               if (isPlaying && isInitialAutoplayBlockedRef.current) {
                 try {
@@ -197,6 +204,24 @@ export function YouTubePlayer({
       if (timePollRef.current) clearInterval(timePollRef.current);
     };
   }, [isApiReady, videoId]);
+
+  // Keep background playback active when tab is hidden or minimized
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const handleVisibility = () => {
+      if (isPlaying && playerRef.current && typeof playerRef.current.playVideo === 'function') {
+        try {
+          const state = typeof playerRef.current.getPlayerState === 'function' ? playerRef.current.getPlayerState() : -1;
+          if (state !== 1) {
+            playerRef.current.playVideo();
+          }
+        } catch {}
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [isPlaying]);
 
   // 3. React to isPlaying changes from HostelSync bottom bar
   useEffect(() => {
